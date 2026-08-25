@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -96,37 +97,12 @@ test:
 }
 
 func TestE2EDryPRFactory(t *testing.T) {
+	root := moduleRoot(t)
+	pipelinePath := filepath.Join(root, "pipelines", "pr-factory-dry.yaml")
+
 	dir := t.TempDir()
 	chdir(t, dir)
 
-	if err := os.MkdirAll("pipelines", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dryPipeline := `
-id: pr-factory-dry
-version: "1"
-stages:
-  - id: intake
-    worker: intake
-  - id: implement
-    worker: shell
-    depends_on: [intake]
-    command: ["/bin/bash", "-c", "printf 'dry implementation summary\n'"]
-  - id: test
-    worker: shell
-    depends_on: [implement]
-    command: ["true"]
-  - id: approve_pr
-    worker: manual
-    depends_on: [test]
-  - id: open_pr
-    worker: shell
-    depends_on: [approve_pr]
-    command: ["echo", "dry open_pr"]
-`
-	if err := os.WriteFile(filepath.Join("pipelines", "pr-factory-dry.yaml"), []byte(dryPipeline), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	specPath := filepath.Join(dir, "spec.md")
 	if err := os.WriteFile(specPath, []byte("dry pr factory\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -134,7 +110,7 @@ stages:
 
 	var out, errOut bytes.Buffer
 	runCmd := NewRootCommand(&out, &errOut)
-	runCmd.SetArgs([]string{"run", "-t", "pr-factory-dry", "--spec", specPath})
+	runCmd.SetArgs([]string{"run", "-t", pipelinePath, "--spec", specPath})
 	if err := runCmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +145,25 @@ stages:
 	}
 	if !strings.Contains(approveOutput, "stage: open_pr\tstatus: succeeded") {
 		t.Fatalf("approve output %q missing succeeded open_pr", approveOutput)
+	}
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(1)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("module root not found")
+		}
+		dir = parent
 	}
 }
 
