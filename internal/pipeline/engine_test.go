@@ -100,6 +100,52 @@ func TestLinearSuccess(t *testing.T) {
 	}
 }
 
+func TestRunWithSpecPathExecutesIntakeStage(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{})
+	eng.Registry.Register("intake", worker.NewIntakeWorker())
+
+	specPath := filepath.Join(dir, "task.md")
+	if err := os.WriteFile(specPath, []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+
+	p := &Pipeline{
+		ID:     "intake",
+		Stages: []Stage{{ID: "intake", Worker: "intake"}},
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		SpecPath:   specPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("run status=%q want succeeded", run.Status)
+	}
+
+	data, err := os.ReadFile(filepath.Join(run.RunDir, "artifacts", "spec"))
+	if err != nil {
+		t.Fatalf("read artifacts/spec: %v", err)
+	}
+	if string(data) != "# Task\n" {
+		t.Fatalf("artifacts/spec=%q want copied spec", data)
+	}
+}
+
 // Step 3: stage b fails → c is skipped, run is failed.
 func TestFailureSkipsDownstream(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{

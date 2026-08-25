@@ -32,6 +32,7 @@ type Engine struct {
 
 	mu        sync.Mutex
 	pipelines map[string]*Pipeline
+	specPaths map[string]string
 	cancels   map[string]context.CancelFunc
 }
 
@@ -42,6 +43,7 @@ func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine
 		Cfg:          cfg,
 		RetryBackoff: 2 * time.Second,
 		pipelines:    make(map[string]*Pipeline),
+		specPaths:    make(map[string]string),
 		cancels:      make(map[string]context.CancelFunc),
 	}
 }
@@ -112,6 +114,9 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 
 	e.mu.Lock()
 	e.pipelines[runID] = pl
+	if p.SpecPath != "" {
+		e.specPaths[runID] = p.SpecPath
+	}
 	e.mu.Unlock()
 
 	return runID, nil
@@ -145,6 +150,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 
 	e.mu.Lock()
 	pl := e.pipelines[runID]
+	specPath := e.specPaths[runID]
 	e.mu.Unlock()
 	if pl == nil {
 		return false, fmt.Errorf("pipeline not found for run %s", runID)
@@ -199,10 +205,11 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		}
 
 		req := worker.Request{
-			RunID:   runID,
-			StageID: sid,
-			WorkDir: run.CWD,
-			RunDir:  run.RunDir,
+			RunID:    runID,
+			StageID:  sid,
+			WorkDir:  run.CWD,
+			RunDir:   run.RunDir,
+			SpecPath: specPath,
 		}
 		if stageDef != nil {
 			req.Prompt = stageDef.Prompt
