@@ -3,6 +3,7 @@ package templates
 import (
 	"embed"
 	"fmt"
+	"sort"
 
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
 )
@@ -30,4 +31,13 @@ func Get(id string) (*pipeline.Pipeline, error) {
 		return nil, fmt.Errorf("load template %q: %w", id, err)
 	}
 	return p, nil
+}
+
+func IDs() []string {
+	ids := make([]string, 0, len(templateFiles))
+	for id := range templateFiles {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }

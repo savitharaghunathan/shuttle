@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 
+	"github.com/savitharaghunathan/shuttle/internal/api"
 	"github.com/savitharaghunathan/shuttle/internal/config"
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
 	"github.com/savitharaghunathan/shuttle/internal/store"
@@ -245,7 +247,27 @@ func newServeCommand(out io.Writer) *cobra.Command {
 		Use:   "serve",
 		Short: "Start the Shuttle server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(out, "serve is not implemented until Task 9")
+			app, err := openApp()
+			if err != nil {
+				return err
+			}
+			defer app.close()
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			srv := &http.Server{
+				Addr: "127.0.0.1:8080",
+				Handler: api.NewHandler(app.engine, api.Options{
+					CWD:         cwd,
+					PipelineIDs: templates.IDs(),
+				}),
+			}
+			fmt.Fprintln(out, "serving on http://127.0.0.1:8080")
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
 			return nil
 		},
 	}
