@@ -1,0 +1,19 @@
+id: pr-factory-dry
+version: "1"
+stages:
+  - id: intake
+    worker: intake
+  - id: implement
+    worker: shell
+    depends_on: [intake]
+    command: ["/bin/bash", "-c", "printf 'dry implementation summary\n'"]
+  - id: test
+    worker: shell
+    depends_on: [implement]
+    command: ["true"]
+  - id: approve_pr
+    worker: manual
+    depends_on: [test]
+  - id: open_pr
+    worker: shell
+    depends_on: [approve_pr]

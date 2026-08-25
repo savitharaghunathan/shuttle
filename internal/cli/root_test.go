@@ -95,6 +95,83 @@ test:
 	}
 }
 
+func TestE2EDryPRFactory(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	if err := os.MkdirAll("pipelines", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dryPipeline := `
+id: pr-factory-dry
+version: "1"
+stages:
+  - id: intake
+    worker: intake
+  - id: implement
+    worker: shell
+    depends_on: [intake]
+    command: ["/bin/bash", "-c", "printf 'dry implementation summary\n'"]
+  - id: test
+    worker: shell
+    depends_on: [implement]
+    command: ["true"]
+  - id: approve_pr
+    worker: manual
+    depends_on: [test]
+  - id: open_pr
+    worker: shell
+    depends_on: [approve_pr]
+    command: ["echo", "dry open_pr"]
+`
+	if err := os.WriteFile(filepath.Join("pipelines", "pr-factory-dry.yaml"), []byte(dryPipeline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	specPath := filepath.Join(dir, "spec.md")
+	if err := os.WriteFile(specPath, []byte("dry pr factory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "pr-factory-dry", "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: blocked") {
+		t.Fatalf("run output %q missing blocked status", runOutput)
+	}
+	for _, want := range []string{
+		"stage: intake\tstatus: succeeded",
+		"stage: implement\tstatus: succeeded",
+		"stage: test\tstatus: succeeded",
+		"stage: approve_pr\tstatus: waiting_approval",
+		"stage: open_pr\tstatus: pending",
+	} {
+		if !strings.Contains(runOutput, want) {
+			t.Fatalf("run output %q missing %q", runOutput, want)
+		}
+	}
+
+	runID := parseRunID(t, runOutput)
+	out.Reset()
+	approveCmd := NewRootCommand(&out, &errOut)
+	approveCmd.SetArgs([]string{"approve", runID, "approve_pr", "--message", "dry approved"})
+	if err := approveCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	approveOutput := out.String()
+	if !strings.Contains(approveOutput, "status: succeeded") {
+		t.Fatalf("approve output %q missing succeeded status", approveOutput)
+	}
+	if !strings.Contains(approveOutput, "stage: open_pr\tstatus: succeeded") {
+		t.Fatalf("approve output %q missing succeeded open_pr", approveOutput)
+	}
+}
+
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	old, err := os.Getwd()

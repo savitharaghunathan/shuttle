@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/savitharaghunathan/shuttle/internal/api"
 	"github.com/savitharaghunathan/shuttle/internal/config"
@@ -59,7 +60,7 @@ func newRunCommand(out io.Writer) *cobra.Command {
 				return fmt.Errorf("--spec is required for pr-factory")
 			}
 
-			pl, err := templates.Get(templateID)
+			pl, err := loadPipelineTemplate(templateID)
 			if err != nil {
 				return err
 			}
@@ -294,7 +295,7 @@ func openApp() (*appContext, error) {
 	}
 	reg := worker.NewRegistry(cfg)
 	eng := pipeline.NewEngine(s, reg, cfg)
-	eng.TemplateLoader = templates.Get
+	eng.TemplateLoader = loadPipelineTemplate
 	return &appContext{
 		cfg:    cfg,
 		store:  s,
@@ -316,6 +317,45 @@ func loadConfig() (*config.Config, error) {
 		return config.LoadDefaults(), nil
 	}
 	return nil, err
+}
+
+func loadPipelineTemplate(templateID string) (*pipeline.Pipeline, error) {
+	pl, embeddedErr := templates.Get(templateID)
+	if embeddedErr == nil {
+		return pl, nil
+	}
+
+	for _, candidate := range pipelineCandidates(templateID) {
+		data, err := os.ReadFile(candidate)
+		if err == nil {
+			pl, err := pipeline.LoadBytes(data)
+			if err != nil {
+				return nil, fmt.Errorf("load pipeline %q: %w", candidate, err)
+			}
+			return pl, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read pipeline %q: %w", candidate, err)
+		}
+	}
+
+	return nil, embeddedErr
+}
+
+func pipelineCandidates(templateID string) []string {
+	ext := filepath.Ext(templateID)
+	isYAML := ext == ".yaml" || ext == ".yml"
+	hasPath := strings.Contains(templateID, string(filepath.Separator))
+
+	var candidates []string
+	if isYAML || hasPath || filepath.IsAbs(templateID) {
+		candidates = append(candidates, templateID)
+	}
+	if !hasPath && !filepath.IsAbs(templateID) {
+		candidates = append(candidates, filepath.Join("pipelines", templateID+".yaml"))
+		candidates = append(candidates, filepath.Join("pipelines", templateID+".yml"))
+	}
+	return candidates
 }
 
 func printRun(out io.Writer, s *store.Store, runID string, includeHints bool) error {
