@@ -64,6 +64,11 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// LoadDefaults returns the design defaults without reading a shuttle.yaml file.
+func LoadDefaults() *Config {
+	return applyDefaults(&fileConfig{})
+}
+
 func applyDefaults(raw *fileConfig) *Config {
 	cfg := &Config{
 		DefaultWorker:  raw.DefaultWorker,

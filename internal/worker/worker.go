@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/savitharaghunathan/shuttle/internal/config"
@@ -68,4 +69,13 @@ func (r *Registry) Get(name string) (Worker, bool) {
 
 func (r *Registry) Register(name string, w Worker) {
 	r.workers[name] = w
+}
+
+func (r *Registry) Names() []string {
+	names := make([]string, 0, len(r.workers))
+	for name := range r.workers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
