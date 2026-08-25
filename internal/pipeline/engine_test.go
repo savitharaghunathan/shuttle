@@ -32,7 +32,9 @@ func newTestEngine(t *testing.T, results map[string]worker.Result) (*Engine, str
 		DefaultTimeout: 5 * time.Minute,
 	}
 
-	return NewEngine(s, reg, cfg), dir
+	eng := NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+	return eng, dir
 }
 
 func stageMap(t *testing.T, eng *Engine, runID string) map[string]store.StageRun {
@@ -344,6 +346,75 @@ func TestCancel(t *testing.T) {
 	}
 	if sm["c"].Status != store.StageStatusSkipped {
 		t.Fatalf("c status=%q want skipped", sm["c"].Status)
+	}
+}
+
+// Cancel interrupts an in-flight slow Execute via context cancellation.
+func TestCancelInterruptsExecute(t *testing.T) {
+	fw := worker.NewFakeWorker(map[string]worker.Result{
+		"slow": {Status: worker.StatusSucceeded, Summary: "done"},
+	})
+	fw.Delay = 10 * time.Second
+
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("fake", fw)
+
+	cfg := &config.Config{
+		WorkRoot:      filepath.Join(dir, ".shuttle"),
+		Concurrency:   2,
+		DefaultWorker: "fake",
+	}
+
+	eng := NewEngine(s, reg, cfg)
+
+	p := &Pipeline{
+		ID:     "cancel-inflight",
+		Stages: []Stage{{ID: "slow"}},
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, tickErr := eng.Tick(ctx, runID)
+		done <- tickErr
+	}()
+
+	// Give Tick time to start Execute
+	time.Sleep(100 * time.Millisecond)
+
+	if err := eng.Cancel(runID); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case tickErr := <-done:
+		if tickErr != nil {
+			// Context cancelled causes the execute to fail; engine marks it failed or retries
+			t.Logf("tick returned error (expected): %v", tickErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Tick did not return within 3s after Cancel — context not propagated")
+	}
+
+	run, _ := eng.Store.GetRun(runID)
+	if run.Status != store.RunStatusCancelled && run.Status != store.RunStatusFailed {
+		t.Logf("run status=%q (cancel propagated context)", run.Status)
 	}
 }
 

@@ -27,6 +27,9 @@ type Engine struct {
 	Registry *worker.Registry
 	Cfg      *config.Config
 
+	// RetryBackoff is the fixed delay between retry attempts (default 2s).
+	RetryBackoff time.Duration
+
 	mu        sync.Mutex
 	pipelines map[string]*Pipeline
 	cancels   map[string]context.CancelFunc
@@ -34,11 +37,12 @@ type Engine struct {
 
 func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine {
 	return &Engine{
-		Store:     s,
-		Registry:  reg,
-		Cfg:       cfg,
-		pipelines: make(map[string]*Pipeline),
-		cancels:   make(map[string]context.CancelFunc),
+		Store:        s,
+		Registry:     reg,
+		Cfg:          cfg,
+		RetryBackoff: 2 * time.Second,
+		pipelines:    make(map[string]*Pipeline),
+		cancels:      make(map[string]context.CancelFunc),
 	}
 }
 
@@ -182,11 +186,16 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			return false, fmt.Errorf("set stage %s running: %w", sid, err)
 		}
 
-		execCtx := ctx
+		runCtx, runCancel := context.WithCancel(ctx)
+		e.mu.Lock()
+		e.cancels[runID] = runCancel
+		e.mu.Unlock()
+
+		execCtx := runCtx
 		if sr.TimeoutMS != nil && *sr.TimeoutMS > 0 {
-			var cancel context.CancelFunc
-			execCtx, cancel = context.WithTimeout(ctx, time.Duration(*sr.TimeoutMS)*time.Millisecond)
-			defer cancel()
+			var tCancel context.CancelFunc
+			execCtx, tCancel = context.WithTimeout(runCtx, time.Duration(*sr.TimeoutMS)*time.Millisecond)
+			defer tCancel()
 		}
 
 		req := worker.Request{
@@ -201,9 +210,13 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		}
 
 		result, execErr := w.Execute(execCtx, req)
+		runCancel()
 
 		if execErr != nil || result.Status == worker.StatusFailed {
 			if sr.Attempt <= sr.Retries {
+				if e.RetryBackoff > 0 {
+					time.Sleep(e.RetryBackoff)
+				}
 				sr.Status = store.StageStatusReady
 				msg := fmt.Sprintf("attempt %d failed, retrying", sr.Attempt)
 				sr.Summary = &msg
