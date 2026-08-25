@@ -1,0 +1,6 @@
+.worktrees/
+.superpowers/
+.shuttle/
+bin/
+/shuttle
+*.db

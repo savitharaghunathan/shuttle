@@ -1,0 +1,19 @@
+id: pr-factory
+version: "1"
+stages:
+  - id: intake
+    worker: intake
+  - id: implement
+    depends_on: [intake]
+    prompt: |
+      Implement the requested change from the intake artifacts and summarize the result.
+    outputs: [summary]
+  - id: test
+    worker: shell
+    depends_on: [implement]
+  - id: approve_pr
+    worker: manual
+    depends_on: [test]
+  - id: open_pr
+    worker: shell
+    depends_on: [approve_pr]

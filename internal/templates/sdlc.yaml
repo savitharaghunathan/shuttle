@@ -1,0 +1,27 @@
+id: sdlc
+version: "1"
+stages:
+  - id: plan
+  - id: design
+    depends_on: [plan]
+    prompt: |
+      Turn the accepted plan into a concrete implementation design.
+  - id: implement
+    depends_on: [design]
+    prompt: |
+      Implement the approved design and summarize the changes.
+    outputs: [summary]
+  - id: test
+    worker: shell
+    depends_on: [implement]
+  - id: review
+    depends_on: [test]
+    prompt: |
+      Review the implementation for correctness, risks, and missing tests.
+    outputs: [summary]
+  - id: approve_ship
+    worker: manual
+    depends_on: [review]
+  - id: ship
+    worker: shell
+    depends_on: [approve_ship]

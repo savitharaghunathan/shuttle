@@ -1,0 +1,25 @@
+default_worker: claude
+work_root: .shuttle
+concurrency: 2
+default_timeout: 30m
+test:
+  command: ["go", "test", "./..."]
+open_pr:
+  command: ["echo", "open_pr skipped: configure open_pr.command"]
+ship:
+  command: ["echo", "ship skipped: configure ship.command"]
+workers:
+  shell:
+    shell: /bin/bash
+  claude:
+    bin: claude
+    args: ["-p", "{{.Prompt}}"]
+  codex:
+    bin: codex
+    args: ["exec", "{{.Prompt}}"]
+  opencode:
+    bin: opencode
+    args: ["run", "{{.Prompt}}"]
+  cursor:
+    bin: cursor-agent
+    args: ["--print", "{{.Prompt}}"]
