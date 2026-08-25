@@ -32,14 +32,14 @@ type Config struct {
 }
 
 type fileConfig struct {
-	DefaultWorker  string                       `yaml:"default_worker"`
-	WorkRoot       string                       `yaml:"work_root"`
-	Concurrency    int                          `yaml:"concurrency"`
-	DefaultTimeout time.Duration                `yaml:"default_timeout"`
-	Test           StageConfig                  `yaml:"test"`
-	OpenPR         StageConfig                  `yaml:"open_pr"`
-	Ship           StageConfig                  `yaml:"ship"`
-	Workers        map[string]workerPresetYAML  `yaml:"workers"`
+	DefaultWorker  string                      `yaml:"default_worker"`
+	WorkRoot       string                      `yaml:"work_root"`
+	Concurrency    int                         `yaml:"concurrency"`
+	DefaultTimeout time.Duration               `yaml:"default_timeout"`
+	Test           StageConfig                 `yaml:"test"`
+	OpenPR         StageConfig                 `yaml:"open_pr"`
+	Ship           StageConfig                 `yaml:"ship"`
+	Workers        map[string]workerPresetYAML `yaml:"workers"`
 }
 
 type workerPresetYAML struct {
@@ -97,7 +97,7 @@ func applyDefaults(raw *fileConfig) *Config {
 		cfg.Ship.Command = []string{"echo", "ship skipped: configure ship.command"}
 	}
 
-	cfg.Workers = defaultWorkers()
+	cfg.Workers = DefaultWorkerPresets()
 	for name, preset := range raw.Workers {
 		wp := WorkerPreset{Bin: preset.Bin, Args: preset.Args}
 		if wp.Bin == "" && preset.Shell != "" {
@@ -115,7 +115,7 @@ func applyDefaults(raw *fileConfig) *Config {
 	return cfg
 }
 
-func defaultWorkers() map[string]WorkerPreset {
+func DefaultWorkerPresets() map[string]WorkerPreset {
 	return map[string]WorkerPreset{
 		"shell": {
 			Bin: "/bin/bash",

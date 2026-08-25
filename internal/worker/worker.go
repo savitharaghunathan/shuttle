@@ -42,18 +42,23 @@ type Registry struct {
 }
 
 func NewRegistry(cfg *config.Config) *Registry {
-	preset := config.WorkerPreset{}
+	presets := config.DefaultWorkerPresets()
 	if cfg != nil {
-		preset = cfg.Workers["shell"]
+		for name, preset := range cfg.Workers {
+			presets[name] = preset
+		}
 	}
 
-	return &Registry{
-		workers: map[string]Worker{
-			"shell":  NewShellWorker(preset),
-			"exec":   NewExecWorker(),
-			"intake": NewIntakeWorker(),
-		},
+	workers := map[string]Worker{
+		"shell":  NewShellWorker(presets["shell"]),
+		"exec":   NewExecWorker(),
+		"intake": NewIntakeWorker(),
 	}
+	for _, name := range []string{"claude", "codex", "opencode", "cursor"} {
+		workers[name] = NewPresetWorker(name, presets[name])
+	}
+
+	return &Registry{workers: workers}
 }
 
 func (r *Registry) Get(name string) (Worker, bool) {

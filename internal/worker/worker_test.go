@@ -115,6 +115,38 @@ func TestExecExecuteRunsFullArgv(t *testing.T) {
 	}
 }
 
+func TestPresetExecuteRendersPromptAndRunsArgv(t *testing.T) {
+	w := worker.NewPresetWorker("claude", config.WorkerPreset{
+		Bin:  "/bin/sh",
+		Args: []string{"-c", "printf '%s' \"$1\"", "shuttle-preset", "{{.Prompt}}"},
+	})
+
+	res, err := w.Execute(context.Background(), worker.Request{
+		Prompt: "build the feature",
+	})
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	if res.Status != worker.StatusSucceeded {
+		t.Fatalf("Status = %q, want %q", res.Status, worker.StatusSucceeded)
+	}
+	if res.Summary != "build the feature" {
+		t.Fatalf("Summary = %q, want rendered prompt", res.Summary)
+	}
+}
+
+func TestPresetExecuteMissingBinNamesWorker(t *testing.T) {
+	w := worker.NewPresetWorker("cursor", config.WorkerPreset{})
+
+	_, err := w.Execute(context.Background(), worker.Request{Prompt: "ship it"})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want missing bin error")
+	}
+	if !strings.Contains(err.Error(), "cursor") {
+		t.Fatalf("Execute() error = %v, want worker name", err)
+	}
+}
+
 func TestFakeExecuteReturnsStageResult(t *testing.T) {
 	w := worker.NewFakeWorker(map[string]worker.Result{
 		"test": {Status: worker.StatusSucceeded, Summary: "done"},
@@ -136,7 +168,7 @@ func TestRegistryIncludesCoreWorkers(t *testing.T) {
 		},
 	})
 
-	for _, name := range []string{"shell", "exec", "intake"} {
+	for _, name := range []string{"shell", "exec", "intake", "claude", "codex", "opencode", "cursor"} {
 		if _, ok := reg.Get(name); !ok {
 			t.Fatalf("Get(%q) ok = false, want true", name)
 		}
