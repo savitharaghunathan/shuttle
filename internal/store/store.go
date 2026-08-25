@@ -66,6 +66,12 @@ func Open(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
 	}
+	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable sqlite foreign keys %s: %w", dbPath, err)
+	}
 
 	if _, err := db.Exec(schemaSQL); err != nil {
 		_ = db.Close()
