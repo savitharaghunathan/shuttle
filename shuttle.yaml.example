@@ -22,4 +22,4 @@ workers:
     args: ["run", "{{.Prompt}}"]
   cursor:
     bin: cursor-agent
-    args: ["--print", "{{.Prompt}}"]
+    args: ["--trust", "--yolo", "--print", "{{.Prompt}}"]

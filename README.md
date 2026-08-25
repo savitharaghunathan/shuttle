@@ -1,8 +1,23 @@
 # shuttle
 
-Shuttle is a local AI software factory control plane. It runs small DAG pipelines, records each run in SQLite, writes run artifacts under `.shuttle/`, and pauses at manual gates before actions such as opening a PR or shipping.
+Shuttle is a local AI software factory control plane. It runs DAG pipelines with agent runtimes, records each run in SQLite, and opens PRs from GitHub issues.
 
-The MVP is intentionally local-first: one process, one SQLite database, one writer, and explicit human approval before sensitive stages.
+## Quick start (issue → PR)
+
+```bash
+go build -o bin/shuttle ./cmd/shuttle
+
+# One-time per repo
+shuttle import repo https://github.com/org/repo
+
+# Headless run from an issue
+shuttle run --issue https://github.com/org/repo/issues/42 \
+            --agent cursor \
+            --model claude-4-sonnet \
+            --headless
+```
+
+Imported repos live under `~/.shuttle/repos/<owner>/<name>`. Shuttle scaffolds `shuttle.yaml` on import (test command, `open_pr`, agent presets). Edit that file once per repo if needed.
 
 ## Install
 
@@ -12,79 +27,106 @@ Build the CLI from the repository:
 go build -o bin/shuttle ./cmd/shuttle
 ```
 
-Then run it from a project directory:
-
-```bash
-./bin/shuttle workers
-./bin/shuttle run -t pr-factory --spec path/to/spec.md
-```
-
 You can also run without building:
 
 ```bash
 go run ./cmd/shuttle workers
 ```
 
+## Import repos
+
+Register a GitHub repo once. Shuttle clones it and writes a starter `shuttle.yaml`:
+
+```bash
+shuttle import repo https://github.com/org/repo
+shuttle import repo git@github.com:org/repo.git   # SSH also supported
+shuttle import repo org/repo                      # shorthand, uses HTTPS
+shuttle repos list
+```
+
+Global state lives in `SHUTTLE_HOME` (default `~/.shuttle`):
+
+```
+~/.shuttle/
+  registry.db              # imported repo index
+  repos/<owner>/<name>/    # git checkout (agent cwd)
+```
+
+## Run modes
+
+### Issue-driven (headless)
+
+```bash
+shuttle run --issue https://github.com/org/repo/issues/1 \
+            --agent cursor \
+            --model claude-4-sonnet \
+            --headless
+```
+
+- Fetches issue body via `gh issue view`
+- Runs `pr-factory-headless`: intake → implement (agent) → test → open_pr
+- No manual approval gate
+
+### Spec file (local cwd)
+
+```bash
+cd /path/to/project
+shuttle run -t pr-factory --spec specs/feature.md
+```
+
+Uses the current directory as the project checkout. Blocks at `approve_pr` unless you pass `--headless`.
+
+### Dry run (no agents)
+
+```bash
+shuttle run -t pr-factory-dry --spec spec.md
+```
+
 ## Configuration
 
-Shuttle reads `shuttle.yaml` from the current directory. If it is absent, design defaults are used.
+Shuttle reads `shuttle.yaml` from the target repo. On `import repo`, Shuttle generates one if missing. You can also maintain it manually:
 
 ```yaml
-default_worker: claude
+default_worker: cursor
 work_root: .shuttle
-concurrency: 2
-default_timeout: 30m
 test:
   command: ["go", "test", "./..."]
 open_pr:
-  command: ["echo", "open_pr skipped: configure open_pr.command"]
-ship:
-  command: ["echo", "ship skipped: configure ship.command"]
+  command: ["gh", "pr", "create", "--fill"]
 workers:
-  shell:
-    shell: /bin/bash
   cursor:
     bin: cursor-agent
-    args: ["--print", "{{.Prompt}}"]
+    args: ["--trust", "--yolo", "--print", "{{.Prompt}}"]
 ```
 
-`default_worker` is used for stages that do not name a worker. Built-in worker names include `intake`, `shell`, `exec`, `claude`, `codex`, `opencode`, and `cursor`.
+`--agent` and `--model` on `shuttle run` override the default worker and are passed into preset arg templates.
 
-Configure `open_pr.command` before using a pipeline that reaches `open_pr`. The default is a safe echo:
-
-```yaml
-open_pr:
-  command: ["gh", "pr", "create", "--fill"]
-```
+Built-in agent runtimes: `claude`, `codex`, `opencode`, `cursor`. Also: `intake`, `shell`, `exec`, `manual`.
 
 ## Pipelines
 
 Embedded templates:
 
-- `pr-factory`: intake a spec, implement, test, pause at `approve_pr`, then run `open_pr`.
-- `sdlc`: plan, design, implement, test, review, pause at `approve_ship`, then run `ship`.
+- `pr-factory`: intake → implement (agent) → test → **approve_pr** → open_pr
+- `pr-factory-headless`: same without the manual gate
+- `sdlc`: plan → design → implement → test → review → approve_ship → ship
 
-Local pipeline overlays can live in `pipelines/`. For example, this repo includes `pipelines/pr-factory-dry.yaml`, which uses shell commands for a dry PR factory run:
-
-```bash
-shuttle run -t pr-factory-dry --spec spec.md
-shuttle run -t pipelines/pr-factory-dry.yaml --spec spec.md
-```
+Local pipeline overlays can live in `pipelines/`.
 
 ## Gates
 
-Manual stages block the run and print approval hints:
+Manual stages block the run (unless `--headless`):
 
 ```bash
 shuttle approve <run-id> approve_pr --message "approved"
 shuttle reject <run-id> approve_pr --message "reason"
 ```
 
-Approving a gate records the approval under `.shuttle/runs/<run-id>/approvals/` and resumes the run. Rejecting a gate fails the run and skips downstream pending stages.
+## Run state and logs
 
-## Run State And Logs
+Per-repo run state: `<repo>/.shuttle/shuttle.db`
 
-All run state is stored in `.shuttle/shuttle.db`; artifacts are written under `.shuttle/runs/<run-id>/`.
+During `shuttle run`, progress streams to the terminal: stage start/complete lines plus live worker output (agent logs stream as they run). Stage logs are also saved under `.shuttle/runs/<run-id>/logs/`.
 
 ```bash
 shuttle status <run-id>
@@ -95,18 +137,10 @@ shuttle cancel <run-id>
 
 `shuttle serve` starts an unauthenticated local HTTP API on `127.0.0.1:8080`. Treat it as local-only.
 
-## Trust Boundary
+## Trust boundary
 
-Only run trusted pipeline YAML and trusted `shuttle.yaml` files. Workers execute with the invoking user's privileges:
+Workers execute with the invoking user's privileges. Agent presets invoke local CLIs (`claude`, `cursor-agent`, etc.). Review pipeline YAML and `shuttle.yaml` before running.
 
-- `shell` and `exec` run configured commands in the project directory.
-- Agent presets invoke local CLIs such as `claude`, `codex`, `opencode`, or `cursor-agent`.
-- `open_pr.command` and `ship.command` are ordinary commands and can perform side effects.
+## Concurrency
 
-Review commands before running a pipeline, especially when accepting YAML from another repository or branch.
-
-## Concurrency And Retry Model
-
-This MVP assumes a single writer to `.shuttle/shuttle.db`. Do not run multiple Shuttle processes against the same work root at the same time.
-
-There is no run resume command and no automatic retry command in the MVP. Stage definitions may carry retry metadata, but failed terminal runs are not resumed in place. Start a new run after changing code, config, or a pipeline.
+Single writer per `.shuttle/shuttle.db`. Do not run multiple Shuttle processes against the same work root concurrently.

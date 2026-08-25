@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,10 +18,13 @@ import (
 )
 
 type StartParams struct {
-	TemplateID string
-	Pipeline   *Pipeline
-	CWD        string
-	SpecPath   string
+	TemplateID  string
+	Pipeline    *Pipeline
+	CWD         string
+	SpecPath    string
+	SpecContent string
+	Agent       string
+	Model       string
 }
 
 type Engine struct {
@@ -35,10 +39,19 @@ type Engine struct {
 	// RetryBackoff is the fixed delay between retry attempts (default 2s).
 	RetryBackoff time.Duration
 
+	// Progress receives live stage announcements and worker output.
+	Progress io.Writer
+
 	mu        sync.Mutex
 	pipelines map[string]*Pipeline
 	specPaths map[string]string
+	runOpts   map[string]runOptions
 	cancels   map[string]context.CancelFunc
+}
+
+type runOptions struct {
+	Agent string
+	Model string
 }
 
 func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine {
@@ -49,6 +62,7 @@ func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine
 		RetryBackoff: 2 * time.Second,
 		pipelines:    make(map[string]*Pipeline),
 		specPaths:    make(map[string]string),
+		runOpts:      make(map[string]runOptions),
 		cancels:      make(map[string]context.CancelFunc),
 	}
 }
@@ -76,7 +90,7 @@ func (e *Engine) EnsurePipeline(runID string) error {
 	if err != nil {
 		return fmt.Errorf("ensure pipeline: load template %q: %w", run.TemplateID, err)
 	}
-	pl = e.applyDefaults(pl)
+	pl = e.applyDefaults(pl, "")
 
 	specPath := filepath.Join(run.RunDir, "inputs", "spec.md")
 	if _, statErr := os.Stat(specPath); statErr != nil {
@@ -108,6 +122,10 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		if err := artifact.CopySpec(runDir, p.SpecPath); err != nil {
 			return "", fmt.Errorf("copy spec: %w", err)
 		}
+	} else if p.SpecContent != "" {
+		if err := artifact.WriteSpec(runDir, []byte(p.SpecContent)); err != nil {
+			return "", fmt.Errorf("write spec: %w", err)
+		}
 	}
 
 	if err := e.Store.CreateRun(store.Run{
@@ -120,7 +138,7 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		return "", fmt.Errorf("create run: %w", err)
 	}
 
-	pl := e.applyDefaults(p.Pipeline)
+	pl := e.applyDefaults(p.Pipeline, p.Agent)
 
 	var stageRuns []store.StageRun
 	for _, stage := range pl.Stages {
@@ -161,6 +179,7 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 	if p.SpecPath != "" {
 		e.specPaths[runID] = p.SpecPath
 	}
+	e.runOpts[runID] = runOptions{Agent: p.Agent, Model: p.Model}
 	e.mu.Unlock()
 
 	return runID, nil
@@ -199,6 +218,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 	e.mu.Lock()
 	pl := e.pipelines[runID]
 	specPath := e.specPaths[runID]
+	opts := e.runOpts[runID]
 	e.mu.Unlock()
 	if pl == nil {
 		return false, fmt.Errorf("pipeline not found for run %s", runID)
@@ -219,6 +239,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 
 		// Manual gate: block without executing
 		if sr.Worker == "manual" {
+			e.progressf("⏸ stage %s waiting for approval\n", sid)
 			sr.Status = store.StageStatusWaitingApproval
 			if err := e.Store.UpdateStage(sr); err != nil {
 				return false, fmt.Errorf("set stage %s waiting_approval: %w", sid, err)
@@ -302,6 +323,8 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			execCtx, tCancel = context.WithTimeout(runCtx, time.Duration(*sr.TimeoutMS)*time.Millisecond)
 		}
 
+		e.progressf("→ stage %s (%s) starting...\n", sid, sr.Worker)
+
 		req := worker.Request{
 			RunID:    runID,
 			StageID:  sid,
@@ -310,6 +333,10 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			SpecPath: specPath,
 			Prompt:   renderedPrompt,
 			Command:  renderedCmd,
+			Agent:    opts.Agent,
+			Model:    opts.Model,
+			Output:   e.Progress,
+			LogPath:  filepath.Join(run.RunDir, "logs", sid+".log"),
 		}
 
 		result, execErr := w.Execute(execCtx, req)
@@ -320,6 +347,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 
 		if execErr != nil || result.Status == worker.StatusFailed {
 			if sr.Attempt <= sr.Retries {
+				e.progressf("↻ stage %s failed, retrying (attempt %d)\n", sid, sr.Attempt)
 				if e.RetryBackoff > 0 {
 					time.Sleep(e.RetryBackoff)
 				}
@@ -336,6 +364,9 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 					msg = execErr.Error()
 				}
 				sr.Summary = &msg
+				logPath := filepath.Join(run.RunDir, "logs", sid+".log")
+				sr.LogPath = &logPath
+				e.progressf("✗ stage %s failed\n", sid)
 				if err := e.Store.UpdateStage(sr); err != nil {
 					return false, err
 				}
@@ -350,6 +381,9 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		} else {
 			sr.Status = store.StageStatusSucceeded
 			sr.Summary = &result.Summary
+			logPath := filepath.Join(run.RunDir, "logs", sid+".log")
+			sr.LogPath = &logPath
+			e.progressf("✓ stage %s succeeded\n", sid)
 			if err := e.Store.UpdateStage(sr); err != nil {
 				return false, err
 			}
@@ -511,7 +545,7 @@ func (e *Engine) Cancel(runID string) error {
 	return e.Store.UpdateRunStatus(runID, store.RunStatusCancelled)
 }
 
-func (e *Engine) applyDefaults(p *Pipeline) *Pipeline {
+func (e *Engine) applyDefaults(p *Pipeline, agentOverride string) *Pipeline {
 	pl := &Pipeline{
 		ID:      p.ID,
 		Version: p.Version,
@@ -519,9 +553,14 @@ func (e *Engine) applyDefaults(p *Pipeline) *Pipeline {
 	}
 	copy(pl.Stages, p.Stages)
 
+	defaultWorker := e.Cfg.DefaultWorker
+	if agentOverride != "" {
+		defaultWorker = agentOverride
+	}
+
 	for i := range pl.Stages {
 		if pl.Stages[i].Worker == "" {
-			pl.Stages[i].Worker = e.Cfg.DefaultWorker
+			pl.Stages[i].Worker = defaultWorker
 		}
 		if len(pl.Stages[i].Command) == 0 {
 			switch pl.Stages[i].ID {
@@ -606,4 +645,11 @@ func envMap() map[string]string {
 		m[k] = v
 	}
 	return m
+}
+
+func (e *Engine) progressf(format string, args ...any) {
+	if e.Progress == nil {
+		return
+	}
+	fmt.Fprintf(e.Progress, format, args...)
 }

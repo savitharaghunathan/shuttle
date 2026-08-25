@@ -1,8 +1,10 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 
@@ -57,10 +59,25 @@ func runArgv(ctx context.Context, req Request, argv []string) (Result, error) {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 
-	output, err := cmd.CombinedOutput()
+	var buf bytes.Buffer
+	writers := []io.Writer{&buf}
+	if req.LogPath != "" {
+		if f, err := os.Create(req.LogPath); err == nil {
+			defer f.Close()
+			writers = append(writers, f)
+		}
+	}
+	if req.Output != nil {
+		writers = append(writers, req.Output)
+	}
+	out := io.MultiWriter(writers...)
+	cmd.Stdout = out
+	cmd.Stderr = out
+
+	err := cmd.Run()
 	result := Result{
 		Status:  StatusSucceeded,
-		Summary: string(output),
+		Summary: buf.String(),
 	}
 	if err == nil {
 		return result, nil

@@ -21,7 +21,10 @@ func CopySpec(runDir, specPath string) error {
 	if err != nil {
 		return fmt.Errorf("read spec %s: %w", specPath, err)
 	}
+	return WriteSpec(runDir, data)
+}
 
+func WriteSpec(runDir string, data []byte) error {
 	inputsPath := filepath.Join(runDir, "inputs", "spec.md")
 	if err := os.WriteFile(inputsPath, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", inputsPath, err)
@@ -33,4 +36,10 @@ func CopySpec(runDir, specPath string) error {
 	}
 
 	return nil
+}
+
+// SpecReady reports whether intake spec artifacts already exist in the run dir.
+func SpecReady(runDir string) bool {
+	_, err := os.Stat(filepath.Join(runDir, "inputs", "spec.md"))
+	return err == nil
 }

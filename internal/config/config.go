@@ -139,7 +139,7 @@ func DefaultWorkerPresets() map[string]WorkerPreset {
 		},
 		"cursor": {
 			Bin:  "cursor-agent",
-			Args: []string{"--print", "{{.Prompt}}"},
+			Args: []string{"--trust", "--yolo", "--print", "{{.Prompt}}"},
 		},
 	}
 }
