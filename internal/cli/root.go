@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/savitharaghunathan/shuttle/internal/api"
 	"github.com/savitharaghunathan/shuttle/internal/config"
+	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
+	"github.com/savitharaghunathan/shuttle/internal/registry"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/templates"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
@@ -34,6 +37,8 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 
 	root.AddCommand(
 		newRunCommand(out),
+		newImportCommand(out),
+		newReposCommand(out),
 		newStatusCommand(out),
 		newLogsCommand(out),
 		newApproveCommand(out),
@@ -48,49 +53,76 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 func newRunCommand(out io.Writer) *cobra.Command {
 	var templateID string
 	var specPath string
+	var issueURL string
+	var agent string
+	var model string
+	var headless bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Start a pipeline run",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if templateID == "" {
-				return fmt.Errorf("--template is required")
+				if headless || issueURL != "" {
+					templateID = "pr-factory-headless"
+				} else {
+					templateID = "pr-factory"
+				}
 			}
-			if templateID == "pr-factory" && specPath == "" {
-				return fmt.Errorf("--spec is required for pr-factory")
+			if headless && templateID == "pr-factory" {
+				templateID = "pr-factory-headless"
+			}
+
+			if issueURL == "" && templateID == "pr-factory" && specPath == "" {
+				return fmt.Errorf("--spec is required for pr-factory (or use --issue)")
+			}
+			if issueURL != "" && specPath != "" {
+				return fmt.Errorf("use either --issue or --spec, not both")
 			}
 
 			pl, err := loadPipelineTemplate(templateID)
 			if err != nil {
 				return err
 			}
-			app, err := openApp()
+
+			cwd, specContent, err := resolveRunInput(cmd.Context(), issueURL, specPath)
+			if err != nil {
+				return err
+			}
+
+			app, err := openAppInDir(cwd)
 			if err != nil {
 				return err
 			}
 			defer app.close()
 
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
 			runID, err := app.engine.StartRun(cmd.Context(), pipeline.StartParams{
-				TemplateID: templateID,
-				Pipeline:   pl,
-				CWD:        cwd,
-				SpecPath:   specPath,
+				TemplateID:  templateID,
+				Pipeline:    pl,
+				CWD:         cwd,
+				SpecPath:    specPath,
+				SpecContent: specContent,
+				Agent:       agent,
+				Model:       model,
 			})
 			if err != nil {
 				return err
 			}
+			fmt.Fprintf(out, "run: %s\n", runID)
+			fmt.Fprintf(out, "template: %s\n\n", templateID)
+			app.engine.Progress = out
 			if err := app.engine.RunUntilBlockOrDone(cmd.Context(), runID); err != nil {
 				return err
 			}
-			return printRun(out, app.store, runID, true)
+			return printRun(out, app.store, runID, true, true)
 		},
 	}
-	cmd.Flags().StringVarP(&templateID, "template", "t", "", "template id (pr-factory or sdlc)")
+	cmd.Flags().StringVarP(&templateID, "template", "t", "", "template id (pr-factory, pr-factory-headless, sdlc)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "path to the task spec")
+	cmd.Flags().StringVar(&issueURL, "issue", "", "GitHub issue URL (requires imported repo)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent runtime for implement stages (claude, cursor, codex, opencode)")
+	cmd.Flags().StringVar(&model, "model", "", "model passed to agent runtime")
+	cmd.Flags().BoolVar(&headless, "headless", false, "run without manual approval gates")
 	return cmd
 }
 
@@ -171,11 +203,12 @@ func newApproveCommand(out io.Writer) *cobra.Command {
 			if err := app.engine.Approve(args[0], args[1], message); err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "approved: %s %s\n", args[0], args[1])
+			fmt.Fprintf(out, "approved: %s %s\n\n", args[0], args[1])
+			app.engine.Progress = out
 			if err := app.engine.RunUntilBlockOrDone(cmd.Context(), args[0]); err != nil {
 				return err
 			}
-			return printRun(out, app.store, args[0], true)
+			return printRun(out, app.store, args[0], true, true)
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "approved", "approval message")
@@ -281,14 +314,27 @@ type appContext struct {
 }
 
 func openApp() (*appContext, error) {
-	cfg, err := loadConfig()
+	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(cfg.WorkRoot, 0o755); err != nil {
-		return nil, fmt.Errorf("create work root %s: %w", cfg.WorkRoot, err)
+	return openAppInDir(cwd)
+}
+
+func openAppInDir(cwd string) (*appContext, error) {
+	cfg, err := loadConfigInDir(cwd)
+	if err != nil {
+		return nil, err
 	}
-	dbPath := filepath.Join(cfg.WorkRoot, "shuttle.db")
+	workRoot := cfg.WorkRoot
+	if !filepath.IsAbs(workRoot) {
+		workRoot = filepath.Join(cwd, workRoot)
+	}
+	cfg.WorkRoot = workRoot
+	if err := os.MkdirAll(workRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("create work root %s: %w", workRoot, err)
+	}
+	dbPath := filepath.Join(workRoot, "shuttle.db")
 	s, err := store.Open(dbPath)
 	if err != nil {
 		return nil, err
@@ -308,7 +354,14 @@ func (a *appContext) close() {
 }
 
 func loadConfig() (*config.Config, error) {
-	const configPath = "shuttle.yaml"
+	return loadConfigInDir("")
+}
+
+func loadConfigInDir(cwd string) (*config.Config, error) {
+	configPath := "shuttle.yaml"
+	if cwd != "" {
+		configPath = filepath.Join(cwd, "shuttle.yaml")
+	}
 	cfg, err := config.Load(configPath)
 	if err == nil {
 		return cfg, nil
@@ -317,6 +370,38 @@ func loadConfig() (*config.Config, error) {
 		return config.LoadDefaults(), nil
 	}
 	return nil, err
+}
+
+func resolveRunInput(ctx context.Context, issueURL, specPath string) (cwd, specContent string, err error) {
+	if issueURL == "" {
+		cwd, err = os.Getwd()
+		return cwd, "", err
+	}
+
+	owner, name, number, err := issue.ParseIssueURL(issueURL)
+	if err != nil {
+		return "", "", err
+	}
+
+	reg, err := openRegistry()
+	if err != nil {
+		return "", "", err
+	}
+	defer reg.Close()
+
+	entry, err := reg.Get(owner, name)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotFound) {
+			return "", "", fmt.Errorf("repo %s/%s not imported; run: shuttle import repo https://github.com/%s/%s", owner, name, owner, name)
+		}
+		return "", "", err
+	}
+
+	specContent, err = issue.FetchSpec(ctx, owner, name, number)
+	if err != nil {
+		return "", "", err
+	}
+	return entry.Path, specContent, nil
 }
 
 func loadPipelineTemplate(templateID string) (*pipeline.Pipeline, error) {
@@ -358,7 +443,7 @@ func pipelineCandidates(templateID string) []string {
 	return candidates
 }
 
-func printRun(out io.Writer, s *store.Store, runID string, includeHints bool) error {
+func printRun(out io.Writer, s *store.Store, runID string, includeHints bool, skipHeader ...bool) error {
 	run, err := s.GetRun(runID)
 	if err != nil {
 		return err
@@ -368,8 +453,12 @@ func printRun(out io.Writer, s *store.Store, runID string, includeHints bool) er
 		return err
 	}
 
-	fmt.Fprintf(out, "run: %s\n", run.ID)
-	fmt.Fprintf(out, "template: %s\n", run.TemplateID)
+	if len(skipHeader) == 0 || !skipHeader[0] {
+		fmt.Fprintf(out, "run: %s\n", run.ID)
+		fmt.Fprintf(out, "template: %s\n", run.TemplateID)
+	} else {
+		fmt.Fprintln(out)
+	}
 	fmt.Fprintf(out, "status: %s\n", run.Status)
 	for _, sr := range stages {
 		fmt.Fprintf(out, "stage: %s\tstatus: %s\tworker: %s\tattempt: %d\n", sr.StageID, sr.Status, sr.Worker, sr.Attempt)

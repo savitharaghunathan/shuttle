@@ -1,0 +1,18 @@
+id: pr-factory-headless
+version: "1"
+stages:
+  - id: intake
+    worker: intake
+  - id: implement
+    depends_on: [intake]
+    prompt: |
+      Implement the requested change from the intake spec artifact.
+      Work in the repository, commit your changes on a feature branch, and push.
+      Summarize what you changed.
+    outputs: [summary]
+  - id: test
+    worker: shell
+    depends_on: [implement]
+  - id: open_pr
+    worker: shell
+    depends_on: [test]

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"io"
 	"sort"
 	"time"
 
@@ -25,6 +26,10 @@ type Request struct {
 	Command  []string
 	Env      map[string]string
 	Timeout  time.Duration
+	Agent    string
+	Model    string
+	Output   io.Writer
+	LogPath  string
 }
 
 type Result struct {

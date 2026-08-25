@@ -98,6 +98,47 @@ func TestIntakeExecuteCopiesSpecAndReportsOutput(t *testing.T) {
 	}
 }
 
+func TestIntakeExecuteAcceptsPreloadedSpec(t *testing.T) {
+	workRoot := t.TempDir()
+	runDir, err := artifact.InitRun(workRoot, "run-1")
+	if err != nil {
+		t.Fatalf("InitRun() = %v", err)
+	}
+	if err := artifact.WriteSpec(runDir, []byte("# Issue spec\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := worker.NewIntakeWorker().Execute(context.Background(), worker.Request{
+		RunDir: runDir,
+	})
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	if res.Status != worker.StatusSucceeded {
+		t.Fatalf("Status = %q, want %q", res.Status, worker.StatusSucceeded)
+	}
+}
+
+func TestShellExecuteStreamsToOutput(t *testing.T) {
+	w := worker.NewShellWorker(config.WorkerPreset{})
+
+	var streamed strings.Builder
+	res, err := w.Execute(context.Background(), worker.Request{
+		StageID: "echo",
+		Command: []string{"echo", "streaming-ok"},
+		Output:  &streamed,
+	})
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	if res.Status != worker.StatusSucceeded {
+		t.Fatalf("Status = %q, want %q", res.Status, worker.StatusSucceeded)
+	}
+	if streamed.String() != "streaming-ok\n" {
+		t.Fatalf("streamed = %q", streamed.String())
+	}
+}
+
 func TestExecExecuteRunsFullArgv(t *testing.T) {
 	w := worker.NewExecWorker()
 
