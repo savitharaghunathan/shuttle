@@ -1,0 +1,4 @@
+.worktrees/
+.shuttle/
+bin/
+*.db
