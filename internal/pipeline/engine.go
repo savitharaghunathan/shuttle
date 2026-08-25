@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -228,6 +229,57 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			return true, nil
 		}
 
+		// Render stage templates before execution
+		rctx := RenderContext{
+			RunID:     runID,
+			StageID:   sid,
+			Cwd:       run.CWD,
+			RunDir:    run.RunDir,
+			Artifacts: collectDir(filepath.Join(run.RunDir, "artifacts")),
+			Inputs:    collectDir(filepath.Join(run.RunDir, "inputs")),
+			Env:       envMap(),
+		}
+		var renderedPrompt string
+		var renderedCmd []string
+		if stageDef != nil {
+			var renderErr error
+			renderedPrompt, renderErr = Render(stageDef.Prompt, rctx)
+			if renderErr != nil {
+				sr.Status = store.StageStatusFailed
+				msg := fmt.Sprintf("render prompt: %v", renderErr)
+				sr.Summary = &msg
+				if err := e.Store.UpdateStage(sr); err != nil {
+					return false, err
+				}
+				if err := e.skipRemaining(runID); err != nil {
+					return false, err
+				}
+				if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+					return false, err
+				}
+				return true, nil
+			}
+			renderedCmd = make([]string, len(stageDef.Command))
+			for i, arg := range stageDef.Command {
+				renderedCmd[i], renderErr = Render(arg, rctx)
+				if renderErr != nil {
+					sr.Status = store.StageStatusFailed
+					msg := fmt.Sprintf("render command[%d]: %v", i, renderErr)
+					sr.Summary = &msg
+					if err := e.Store.UpdateStage(sr); err != nil {
+						return false, err
+					}
+					if err := e.skipRemaining(runID); err != nil {
+						return false, err
+					}
+					if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+						return false, err
+					}
+					return true, nil
+				}
+			}
+		}
+
 		w, ok := e.Registry.Get(sr.Worker)
 		if !ok {
 			return false, fmt.Errorf("worker %q not registered", sr.Worker)
@@ -245,10 +297,9 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		e.mu.Unlock()
 
 		execCtx := runCtx
+		var tCancel context.CancelFunc
 		if sr.TimeoutMS != nil && *sr.TimeoutMS > 0 {
-			var tCancel context.CancelFunc
 			execCtx, tCancel = context.WithTimeout(runCtx, time.Duration(*sr.TimeoutMS)*time.Millisecond)
-			defer tCancel()
 		}
 
 		req := worker.Request{
@@ -257,13 +308,14 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			WorkDir:  run.CWD,
 			RunDir:   run.RunDir,
 			SpecPath: specPath,
-		}
-		if stageDef != nil {
-			req.Prompt = stageDef.Prompt
-			req.Command = stageDef.Command
+			Prompt:   renderedPrompt,
+			Command:  renderedCmd,
 		}
 
 		result, execErr := w.Execute(execCtx, req)
+		if tCancel != nil {
+			tCancel()
+		}
 		runCancel()
 
 		if execErr != nil || result.Status == worker.StatusFailed {
@@ -386,7 +438,11 @@ func (e *Engine) Approve(runID, stageID, message string) error {
 		if err != nil {
 			return err
 		}
-		approvalPath := filepath.Join(run.RunDir, "approvals", stageID+".md")
+		approvalDir := filepath.Join(run.RunDir, "approvals")
+		if err := os.MkdirAll(approvalDir, 0o755); err != nil {
+			return fmt.Errorf("create approvals dir: %w", err)
+		}
+		approvalPath := filepath.Join(approvalDir, stageID+".md")
 		if err := os.WriteFile(approvalPath, []byte(message), 0o644); err != nil {
 			return fmt.Errorf("write approval: %w", err)
 		}
@@ -529,4 +585,25 @@ func findStage(pl *Pipeline, id string) *Stage {
 		}
 	}
 	return nil
+}
+
+func collectDir(dir string) map[string]string {
+	m := make(map[string]string)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return m
+	}
+	for _, e := range entries {
+		m[e.Name()] = filepath.Join(dir, e.Name())
+	}
+	return m
+}
+
+func envMap() map[string]string {
+	m := make(map[string]string)
+	for _, e := range os.Environ() {
+		k, v, _ := strings.Cut(e, "=")
+		m[k] = v
+	}
+	return m
 }

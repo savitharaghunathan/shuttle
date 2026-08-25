@@ -546,6 +546,138 @@ func TestFreshEngineApproveAndContinue(t *testing.T) {
 	}
 }
 
+// captureWorker records the last Request it received.
+type captureWorker struct {
+	result  worker.Result
+	lastReq worker.Request
+}
+
+func (w *captureWorker) Name() string { return "capture" }
+func (w *captureWorker) Execute(_ context.Context, req worker.Request) (worker.Result, error) {
+	w.lastReq = req
+	return w.result, nil
+}
+
+func TestRenderPromptWithArtifact(t *testing.T) {
+	cw := &captureWorker{
+		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
+	}
+
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("capture", cw)
+
+	cfg := &config.Config{
+		WorkRoot:    filepath.Join(dir, ".shuttle"),
+		Concurrency: 2,
+	}
+
+	eng := NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+
+	specFile := filepath.Join(dir, "spec.md")
+	if err := os.WriteFile(specFile, []byte("# Spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Pipeline{
+		ID: "render-test",
+		Stages: []Stage{
+			{ID: "impl", Worker: "capture", Prompt: "Read {{.Artifacts.spec}} and implement"},
+		},
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		SpecPath:   specFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, _ := eng.Store.GetRun(runID)
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("run status=%q want succeeded", run.Status)
+	}
+
+	expectedArtifact := filepath.Join(run.RunDir, "artifacts", "spec")
+	expectedPrompt := "Read " + expectedArtifact + " and implement"
+	if cw.lastReq.Prompt != expectedPrompt {
+		t.Fatalf("rendered prompt=%q\n     want=%q", cw.lastReq.Prompt, expectedPrompt)
+	}
+}
+
+func TestRenderMissingArtifactFailsStage(t *testing.T) {
+	cw := &captureWorker{
+		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
+	}
+
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("capture", cw)
+
+	cfg := &config.Config{
+		WorkRoot:    filepath.Join(dir, ".shuttle"),
+		Concurrency: 2,
+	}
+
+	eng := NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+
+	p := &Pipeline{
+		ID: "render-missing",
+		Stages: []Stage{
+			{ID: "impl", Worker: "capture", Prompt: "Read {{.Artifacts.nonexistent}} please"},
+		},
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, _ := eng.Store.GetRun(runID)
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed (missing artifact)", run.Status)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["impl"].Status != store.StageStatusFailed {
+		t.Fatalf("impl status=%q want failed", sm["impl"].Status)
+	}
+	if sm["impl"].Summary == nil || *sm["impl"].Summary == "" {
+		t.Fatal("impl summary should describe render error")
+	}
+}
+
 // Outputs produced by a successful stage are materialized under artifacts/<stageID>/.
 func TestOutputsMaterialized(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{
