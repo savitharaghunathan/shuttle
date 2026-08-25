@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -461,6 +462,87 @@ func TestCancelInterruptsExecute(t *testing.T) {
 	run, _ := eng.Store.GetRun(runID)
 	if run.Status != store.RunStatusCancelled && run.Status != store.RunStatusFailed {
 		t.Logf("run status=%q (cancel propagated context)", run.Status)
+	}
+}
+
+// Task 8: fresh Engine (empty in-memory maps) can Tick an existing run after EnsurePipeline.
+func TestFreshEngineApproveAndContinue(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"intake":    {Status: worker.StatusSucceeded, Summary: "intake ok"},
+		"implement": {Status: worker.StatusSucceeded, Summary: "impl ok"},
+		"test":      {Status: worker.StatusSucceeded, Summary: "tests pass"},
+	})
+
+	p := &Pipeline{
+		ID: "pr-factory",
+		Stages: []Stage{
+			{ID: "intake", Worker: "fake"},
+			{ID: "implement", Worker: "fake", DependsOn: []string{"intake"}},
+			{ID: "test", Worker: "fake", DependsOn: []string{"implement"}},
+			{ID: "approve_pr", Worker: "manual", DependsOn: []string{"test"}},
+			{ID: "ship", Worker: "fake", DependsOn: []string{"approve_pr"}},
+		},
+	}
+
+	// Set TemplateLoader so EnsurePipeline can reload the pipeline definition.
+	eng.TemplateLoader = func(id string) (*Pipeline, error) {
+		if id == "pr-factory" {
+			return p, nil
+		}
+		return nil, fmt.Errorf("unknown template %q", id)
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "pr-factory",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, _ := eng.Store.GetRun(runID)
+	if run.Status != store.RunStatusBlocked {
+		t.Fatalf("run status=%q want blocked", run.Status)
+	}
+
+	// Simulate a fresh CLI invocation: new Engine with same store, empty maps.
+	shipResults := worker.NewFakeWorker(map[string]worker.Result{
+		"ship": {Status: worker.StatusSucceeded, Summary: "shipped"},
+	})
+	reg2 := worker.NewRegistry(nil)
+	reg2.Register("fake", shipResults)
+
+	eng2 := NewEngine(eng.Store, reg2, eng.Cfg)
+	eng2.RetryBackoff = 0
+	eng2.TemplateLoader = func(id string) (*Pipeline, error) {
+		if id == "pr-factory" {
+			return p, nil
+		}
+		return nil, fmt.Errorf("unknown template %q", id)
+	}
+
+	if err := eng2.Approve(runID, "approve_pr", "LGTM"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng2.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, _ = eng2.Store.GetRun(runID)
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("run status=%q want succeeded after fresh-engine approve", run.Status)
+	}
+
+	sm := stageMap(t, eng2, runID)
+	if sm["ship"].Status != store.StageStatusSucceeded {
+		t.Fatalf("ship status=%q want succeeded", sm["ship"].Status)
 	}
 }
 

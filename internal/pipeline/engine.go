@@ -27,6 +27,10 @@ type Engine struct {
 	Registry *worker.Registry
 	Cfg      *config.Config
 
+	// TemplateLoader resolves a template ID to its Pipeline definition.
+	// Set by the CLI layer to templates.Get to avoid import cycles.
+	TemplateLoader func(id string) (*Pipeline, error)
+
 	// RetryBackoff is the fixed delay between retry attempts (default 2s).
 	RetryBackoff time.Duration
 
@@ -46,6 +50,45 @@ func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine
 		specPaths:    make(map[string]string),
 		cancels:      make(map[string]context.CancelFunc),
 	}
+}
+
+// EnsurePipeline reloads the pipeline definition into memory if a fresh Engine
+// instance doesn't already have it cached (e.g. across CLI invocations).
+func (e *Engine) EnsurePipeline(runID string) error {
+	e.mu.Lock()
+	if e.pipelines[runID] != nil {
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+
+	if e.TemplateLoader == nil {
+		return fmt.Errorf("pipeline not found for run %s (no TemplateLoader configured)", runID)
+	}
+
+	run, err := e.Store.GetRun(runID)
+	if err != nil {
+		return fmt.Errorf("ensure pipeline: %w", err)
+	}
+
+	pl, err := e.TemplateLoader(run.TemplateID)
+	if err != nil {
+		return fmt.Errorf("ensure pipeline: load template %q: %w", run.TemplateID, err)
+	}
+	pl = e.applyDefaults(pl)
+
+	specPath := filepath.Join(run.RunDir, "inputs", "spec.md")
+	if _, statErr := os.Stat(specPath); statErr != nil {
+		specPath = ""
+	}
+
+	e.mu.Lock()
+	e.pipelines[runID] = pl
+	if specPath != "" {
+		e.specPaths[runID] = specPath
+	}
+	e.mu.Unlock()
+	return nil
 }
 
 func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
@@ -123,6 +166,10 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 }
 
 func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
+	if err := e.EnsurePipeline(runID); err != nil {
+		return false, err
+	}
+
 	run, err := e.Store.GetRun(runID)
 	if err != nil {
 		return false, fmt.Errorf("get run: %w", err)

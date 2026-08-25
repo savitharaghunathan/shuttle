@@ -169,7 +169,10 @@ func newApproveCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(out, "approved: %s %s\n", args[0], args[1])
-			return nil
+			if err := app.engine.RunUntilBlockOrDone(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			return printRun(out, app.store, args[0], true)
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "approved", "approval message")
@@ -268,10 +271,12 @@ func openApp() (*appContext, error) {
 		return nil, err
 	}
 	reg := worker.NewRegistry(cfg)
+	eng := pipeline.NewEngine(s, reg, cfg)
+	eng.TemplateLoader = templates.Get
 	return &appContext{
 		cfg:    cfg,
 		store:  s,
-		engine: pipeline.NewEngine(s, reg, cfg),
+		engine: eng,
 	}, nil
 }
 
