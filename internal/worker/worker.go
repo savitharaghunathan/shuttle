@@ -60,3 +60,7 @@ func (r *Registry) Get(name string) (Worker, bool) {
 	w, ok := r.workers[name]
 	return w, ok
 }
+
+func (r *Registry) Register(name string, w Worker) {
+	r.workers[name] = w
+}
