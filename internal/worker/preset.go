@@ -39,7 +39,11 @@ func (w *PresetWorker) Execute(ctx context.Context, req Request) (Result, error)
 	argv := make([]string, 0, 1+len(args))
 	argv = append(argv, w.preset.Bin)
 	argv = append(argv, args...)
-	return runArgv(ctx, req, argv)
+	res, err := runArgv(ctx, req, argv)
+	if err != nil {
+		return res, fmt.Errorf("worker %q: %w", w.name, err)
+	}
+	return res, nil
 }
 
 func renderPresetArg(arg string, req Request) (string, error) {

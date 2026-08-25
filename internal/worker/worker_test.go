@@ -147,6 +147,21 @@ func TestPresetExecuteMissingBinNamesWorker(t *testing.T) {
 	}
 }
 
+func TestPresetExecuteMissingBinaryNamesWorker(t *testing.T) {
+	w := worker.NewPresetWorker("claude", config.WorkerPreset{
+		Bin:  "/definitely/missing/shuttle-binary",
+		Args: []string{"--version"},
+	})
+
+	_, err := w.Execute(context.Background(), worker.Request{Prompt: "ship it"})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want missing binary error")
+	}
+	if !strings.Contains(err.Error(), "claude") {
+		t.Fatalf("Execute() error = %v, want worker name", err)
+	}
+}
+
 func TestFakeExecuteReturnsStageResult(t *testing.T) {
 	w := worker.NewFakeWorker(map[string]worker.Result{
 		"test": {Status: worker.StatusSucceeded, Summary: "done"},
