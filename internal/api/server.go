@@ -441,7 +441,7 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 func httpStatusForError(err error) int {
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrRunIDNotFound) {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest

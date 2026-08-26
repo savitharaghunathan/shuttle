@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,9 +19,86 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
 	"github.com/savitharaghunathan/shuttle/internal/worker/workertest"
-	"os"
-	"os/exec"
 )
+
+type recoveryTestEnv struct {
+	t       *testing.T
+	dir     string
+	handler http.Handler
+	store   *store.Store
+	reg     *worker.Registry
+}
+
+func newRecoveryTestEnv(t *testing.T, results map[string]worker.Result) *recoveryTestEnv {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("fake", workertest.NewFakeWorker(results))
+	cfg := &config.Config{
+		WorkRoot:       filepath.Join(dir, ".shuttle"),
+		Concurrency:    1,
+		DefaultWorker:  "fake",
+		DefaultTimeout: 5 * time.Minute,
+	}
+	eng := pipeline.NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+	eng.TemplateLoader = func(id string) (*pipeline.Pipeline, error) {
+		return &pipeline.Pipeline{
+			ID: id,
+			Stages: []pipeline.Stage{
+				{ID: "build"},
+			},
+		}, nil
+	}
+
+	return &recoveryTestEnv{
+		t:       t,
+		dir:     dir,
+		handler: api.NewHandler(eng, api.Options{CWD: dir, PipelineIDs: []string{"demo"}}),
+		store:   s,
+		reg:     reg,
+	}
+}
+
+func (e *recoveryTestEnv) post(path, body string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	var reqBody *bytes.Buffer
+	if body == "" {
+		reqBody = bytes.NewBuffer(nil)
+	} else {
+		reqBody = bytes.NewBufferString(body)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, reqBody)
+	req = req.WithContext(context.Background())
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp := httptest.NewRecorder()
+	e.handler.ServeHTTP(resp, req)
+	return resp
+}
+
+func (e *recoveryTestEnv) createRun(body string) (id, status string) {
+	e.t.Helper()
+	resp := e.post("/v1/runs", body)
+	if resp.Code != http.StatusCreated {
+		e.t.Fatalf("POST /v1/runs status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var created struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		e.t.Fatal(err)
+	}
+	return created.ID, created.Status
+}
 
 func TestCreateRunAndGetStatus(t *testing.T) {
 	dir := t.TempDir()
@@ -328,5 +408,204 @@ func TestRetryEndpointWarnings(t *testing.T) {
 	}
 	if w, ok := got["warnings"].([]any); !ok || len(w) == 0 {
 		t.Fatalf("warnings empty or missing: %v", got["warnings"])
+	}
+}
+
+func TestResumeEndpointNotFound(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusFailed, Summary: "failed"},
+	})
+	resp := env.post("/v1/runs/00000000/resume", "")
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s want 404", resp.Code, resp.Body.String())
+	}
+}
+
+func TestResumeEndpointInvalidState(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "ok"},
+	})
+	id, status := env.createRun(`{"template_id":"demo"}`)
+	if status != string(store.RunStatusSucceeded) {
+		t.Fatalf("precondition status=%q want succeeded", status)
+	}
+	resp := env.post("/v1/runs/"+id+"/resume", "")
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s want 409", resp.Code, resp.Body.String())
+	}
+}
+
+func TestResumeEndpointRunIDPrefix(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusFailed, Summary: "failed"},
+	})
+	id, status := env.createRun(`{"template_id":"demo"}`)
+	if status != string(store.RunStatusFailed) {
+		t.Fatalf("precondition status=%q want failed", status)
+	}
+	env.reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "ok"},
+	}))
+	prefix := id
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	resp := env.post("/v1/runs/"+prefix+"/resume", "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var got struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != id {
+		t.Fatalf("id=%q want %q", got.ID, id)
+	}
+	if got.Status != string(store.RunStatusSucceeded) {
+		t.Fatalf("status=%q want succeeded", got.Status)
+	}
+}
+
+func TestRetryEndpointSuccess(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusFailed, Summary: "failed"},
+	})
+	specPath := filepath.Join(env.dir, "spec.md")
+	if err := os.WriteFile(specPath, []byte("retry spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parentID, status := env.createRun(`{"template_id":"demo","spec_path":"` + specPath + `"}`)
+	if status != string(store.RunStatusFailed) {
+		t.Fatalf("precondition status=%q want failed", status)
+	}
+	env.reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "ok"},
+	}))
+
+	resp := env.post("/v1/runs/"+parentID+"/retry", `{"agent":"shell"}`)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var got struct {
+		ID          string   `json:"id"`
+		ParentRunID string   `json:"parent_run_id"`
+		Status      string   `json:"status"`
+		Warnings    []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID == "" || got.ID == parentID {
+		t.Fatalf("child id=%q should differ from parent", got.ID)
+	}
+	if got.ParentRunID != parentID {
+		t.Fatalf("parent_run_id=%q want %q", got.ParentRunID, parentID)
+	}
+	if got.Status != string(store.RunStatusSucceeded) {
+		t.Fatalf("status=%q want succeeded", got.Status)
+	}
+	child, err := env.store.GetRun(got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Agent != "shell" {
+		t.Fatalf("agent=%q want shell override", child.Agent)
+	}
+}
+
+func TestRetryEndpointSucceededRequiresForce(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "ok"},
+	})
+	specPath := filepath.Join(env.dir, "spec.md")
+	if err := os.WriteFile(specPath, []byte("spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parentID, status := env.createRun(`{"template_id":"demo","spec_path":"` + specPath + `"}`)
+	if status != string(store.RunStatusSucceeded) {
+		t.Fatalf("precondition status=%q want succeeded", status)
+	}
+
+	resp := env.post("/v1/runs/"+parentID+"/retry", "")
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("retry without force status=%d body=%s want 409", resp.Code, resp.Body.String())
+	}
+
+	forced := env.post("/v1/runs/"+parentID+"/retry", `{"force":true}`)
+	if forced.Code != http.StatusCreated {
+		t.Fatalf("forced retry status=%d body=%s", forced.Code, forced.Body.String())
+	}
+	var got struct {
+		ID          string `json:"id"`
+		ParentRunID string `json:"parent_run_id"`
+	}
+	if err := json.Unmarshal(forced.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID == parentID {
+		t.Fatal("forced retry must create a new run id")
+	}
+	if got.ParentRunID != parentID {
+		t.Fatalf("parent_run_id=%q want %q", got.ParentRunID, parentID)
+	}
+}
+
+func TestRetryEndpointNotFound(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusFailed, Summary: "failed"},
+	})
+	resp := env.post("/v1/runs/00000000/retry", "")
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s want 404", resp.Code, resp.Body.String())
+	}
+}
+
+func TestRetryEndpointMissingSpec(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusFailed, Summary: "failed"},
+	})
+	parentID, status := env.createRun(`{"template_id":"demo"}`)
+	if status != string(store.RunStatusFailed) {
+		t.Fatalf("precondition status=%q want failed", status)
+	}
+	run, err := env.store.GetRun(parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specPath := filepath.Join(run.RunDir, "inputs", "spec.md")
+	if _, err := os.Stat(specPath); !os.IsNotExist(err) {
+		t.Fatalf("spec should be missing at %s", specPath)
+	}
+
+	resp := env.post("/v1/runs/"+parentID+"/retry", "")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s want 400", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), "no spec") {
+		t.Fatalf("body=%q want no spec error", resp.Body.String())
+	}
+}
+
+func TestRecoveryEndpointAmbiguousPrefix(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusFailed, Summary: "failed"},
+	})
+	for _, id := range []string{
+		"a1b2c3d4-1111-4111-8111-000000000000",
+		"a1b2c3d4-2222-4222-8222-000000000000",
+	} {
+		if err := env.store.CreateRun(store.Run{
+			ID: id, TemplateID: "demo", Status: store.RunStatusFailed,
+			CWD: env.dir, RunDir: filepath.Join(env.dir, id),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp := env.post("/v1/runs/a1b2c3d4/resume", "")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s want 400 ambiguous prefix", resp.Code, resp.Body.String())
 	}
 }
