@@ -17,7 +17,7 @@ shuttle run --issue https://github.com/org/repo/issues/42 \
             --headless
 ```
 
-Imported repos live under `~/.shuttle/repos/<owner>/<name>`. Shuttle scaffolds `shuttle.yaml` on import (test command, `open_pr`, agent presets). Edit that file once per repo if needed.
+Imported repos live under `~/.shuttle/repos/<owner>/<name>` by default, or at any path you register with `--path` / `.`. Shuttle scaffolds `shuttle.yaml` on import (test command, `open_pr`, agent presets). Edit that file once per repo if needed.
 
 ## Install
 
@@ -35,12 +35,19 @@ go run ./cmd/shuttle workers
 
 ## Import repos
 
-Register a GitHub repo once. Shuttle clones it and writes a starter `shuttle.yaml`:
+Register a GitHub repo once. Shuttle writes a starter `shuttle.yaml` if missing.
 
 ```bash
+# Clone into ~/.shuttle/repos/<owner>/<name> (default)
 shuttle import repo https://github.com/org/repo
 shuttle import repo git@github.com:org/repo.git   # SSH also supported
 shuttle import repo org/repo                      # shorthand, uses HTTPS
+
+# Register an existing checkout (no clone)
+shuttle import repo --path /path/to/checkout org/repo
+shuttle import repo --path /path/to/checkout      # owner/name from git origin
+cd /path/to/checkout && shuttle import repo .
+
 shuttle repos list
 ```
 
@@ -48,8 +55,8 @@ Global state lives in `SHUTTLE_HOME` (default `~/.shuttle`):
 
 ```
 ~/.shuttle/
-  registry.db              # imported repo index
-  repos/<owner>/<name>/    # git checkout (agent cwd)
+  registry.db              # imported repo index (path may be outside this tree)
+  repos/<owner>/<name>/    # default clone location when --path / . is not used
 ```
 
 ## Run modes

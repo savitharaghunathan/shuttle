@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/savitharaghunathan/shuttle/internal/registry"
@@ -133,6 +134,132 @@ func TestImportUsesHTTPSCloneURL(t *testing.T) {
 	}
 	if clonedURL != "https://github.com/org/demo.git" {
 		t.Fatalf("clone URL = %q, want https://github.com/org/demo.git", clonedURL)
+	}
+}
+
+func TestImportLocalPathNoClone(t *testing.T) {
+	dir := t.TempDir()
+	initRepoWithOrigin(t, dir, "https://github.com/org/demo.git")
+	writeFile(t, filepath.Join(dir, "go.mod"), "module demo\n")
+
+	reg, err := registry.Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	cloneCalled := false
+	got, err := Import(context.Background(), "org/demo", reg, ImportOpts{
+		LocalPath: dir,
+		CloneFn: func(ctx context.Context, url, dest string) error {
+			cloneCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cloneCalled {
+		t.Fatal("clone must not run for LocalPath import")
+	}
+	wantPath := absPath(t, dir)
+	if got.Path != wantPath {
+		t.Fatalf("Path = %q, want %q", got.Path, wantPath)
+	}
+	if got.Owner != "org" || got.Name != "demo" {
+		t.Fatalf("got %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(got.Path, "shuttle.yaml")); err != nil {
+		t.Fatalf("shuttle.yaml missing: %v", err)
+	}
+}
+
+func TestImportLocalPathRemoteOnly(t *testing.T) {
+	dir := t.TempDir()
+	initRepoWithOrigin(t, dir, "git@github.com:acme/widget.git")
+
+	reg, err := registry.Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	got, err := Import(context.Background(), "", reg, ImportOpts{LocalPath: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Owner != "acme" || got.Name != "widget" {
+		t.Fatalf("got %+v", got)
+	}
+	if got.Path != absPath(t, dir) {
+		t.Fatalf("Path = %q", got.Path)
+	}
+}
+
+func TestImportLocalPathMismatch(t *testing.T) {
+	dir := t.TempDir()
+	initRepoWithOrigin(t, dir, "https://github.com/org/demo.git")
+
+	reg, err := registry.Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	_, err = Import(context.Background(), "org/other", reg, ImportOpts{LocalPath: dir})
+	if err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if !strings.Contains(err.Error(), "path remote is org/demo, expected org/other") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestImportLocalPathNotGit(t *testing.T) {
+	dir := t.TempDir()
+	reg, err := registry.Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	_, err = Import(context.Background(), "org/demo", reg, ImportOpts{LocalPath: dir})
+	if err == nil {
+		t.Fatal("expected not a git repository")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestImportLocalPathMissingDir(t *testing.T) {
+	reg, err := registry.Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	_, err = Import(context.Background(), "org/demo", reg, ImportOpts{
+		LocalPath: filepath.Join(t.TempDir(), "missing"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "path does not exist") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestImportLocalPathNoOwner(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	reg, err := registry.Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	_, err = Import(context.Background(), "", reg, ImportOpts{LocalPath: dir})
+	if err == nil || !strings.Contains(err.Error(), "cannot determine GitHub owner/name") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

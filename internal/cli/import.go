@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/savitharaghunathan/shuttle/internal/home"
 	"github.com/savitharaghunathan/shuttle/internal/registry"
@@ -22,11 +24,34 @@ func newImportCommand(out io.Writer) *cobra.Command {
 }
 
 func newImportRepoCommand(out io.Writer) *cobra.Command {
+	var pathFlag string
 	cmd := &cobra.Command{
-		Use:   "repo <github-url>",
-		Short: "Clone and register a GitHub repository",
-		Args:  cobra.ExactArgs(1),
+		Use:   "repo [github-url|.]",
+		Short: "Clone or register a GitHub repository",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			rawURL := ""
+			if len(args) == 1 {
+				rawURL = strings.TrimSpace(args[0])
+			}
+
+			localPath := strings.TrimSpace(pathFlag)
+			if rawURL == "." {
+				if localPath != "" {
+					return fmt.Errorf("use either --path or ., not both")
+				}
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				localPath = cwd
+				rawURL = ""
+			}
+
+			if localPath == "" && rawURL == "" {
+				return fmt.Errorf("github url required (or use --path / .)")
+			}
+
 			if err := os.MkdirAll(home.Dir(), 0o755); err != nil {
 				return err
 			}
@@ -36,7 +61,16 @@ func newImportRepoCommand(out io.Writer) *cobra.Command {
 			}
 			defer reg.Close()
 
-			entry, err := repo.Import(cmd.Context(), args[0], reg, repo.ImportOpts{})
+			opts := repo.ImportOpts{}
+			if localPath != "" {
+				abs, err := filepath.Abs(localPath)
+				if err != nil {
+					return err
+				}
+				opts.LocalPath = abs
+			}
+
+			entry, err := repo.Import(cmd.Context(), rawURL, reg, opts)
 			if err != nil {
 				return err
 			}
@@ -45,6 +79,7 @@ func newImportRepoCommand(out io.Writer) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&pathFlag, "path", "", "existing local checkout to register (no clone)")
 	return cmd
 }
 

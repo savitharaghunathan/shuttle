@@ -65,11 +65,12 @@ shuttle import repo .
 3. Resolve path to absolute before upsert.
 4. Resolve `owner`/`name`:
    - From an explicit GitHub URL / `owner/name` argument when present.
-   - Else from `git remote get-url origin` in that directory (HTTPS or SSH), via existing `ParseGitHubURL`.
+   - Else from the checkout's `origin` remote (via go-git; HTTPS or SSH), via existing `ParseGitHubURL`.
 5. If neither arg nor remote yields a GitHub owner/name → error.
 6. If both arg and remote are present and disagree → error (refuse silent mismatch).
 7. Scaffold `shuttle.yaml` only if missing (unchanged).
 8. `reg.Upsert` with the resolved absolute path (re-import retargets path).
+9. Clone (URL-only import) and remote reads use **go-git** (Apache-2.0), not the `git` CLI.
 
 ### Output
 
@@ -102,4 +103,6 @@ path: /Users/savee/local_dev/test
 - Go module: `github.com/savitharaghunathan/shuttle`
 - Single SQLite writer per DB file
 - Trust boundary unchanged: workers run as invoking user in the registered path
+- Prefer OSS libraries with **MIT or Apache-2.0** licenses; avoid shelling out when a suitable library exists (git ops: [go-git](https://github.com/go-git/go-git), Apache-2.0)
 - **Git commits:** `git commit -s` (Signed-off-by) plus body line `Assisted-by: Cursor <cursoragent@cursor.com>`. Do **not** add `Co-authored-by: Cursor <cursoragent@cursor.com>`.
+
