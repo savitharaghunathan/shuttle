@@ -259,6 +259,10 @@ func TestRetryEndpointWarnings(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	specPath := filepath.Join(dir, "spec.md")
+	if err := os.WriteFile(specPath, []byte("retry me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
 	if err != nil {
@@ -292,7 +296,7 @@ func TestRetryEndpointWarnings(t *testing.T) {
 		PipelineIDs: []string{"demo"},
 	})
 
-	body := bytes.NewBufferString(`{"template_id":"demo"}`)
+	body := bytes.NewBufferString(`{"template_id":"demo","spec_path":"` + specPath + `"}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/v1/runs", body)
 	createReq = createReq.WithContext(context.Background())
 	createReq.Header.Set("Content-Type", "application/json")
