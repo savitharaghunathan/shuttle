@@ -23,14 +23,8 @@ Built-in CLI adapters for Claude, Codex, Cursor, and OpenCode. Any agent defined
 ### Developer ergonomics
 Dry-run pipelines, per-stage logs, `approve`/`reject` gates, and embedded templates (`pr-factory`, `pr-factory-headless`, `sdlc`).
 
----
-
-## Now
-
 ### Runs view + recovery
-**Goal:** List and compare runs for the current repo (agent, status, time, issue), and resume or retry failed/cancelled runs instead of starting from scratch.
-
-Today you can only inspect one run at a time (`status`, `logs`). Failed/cancelled runs are terminal. Agent/model choices are not persisted across CLI sessions.
+List and compare runs (agent, status, time, issue, stage) via `shuttle runs list` and `GET /v1/runs`. Resume failed/cancelled runs from the earliest failed stage; retry any terminal run against its frozen spec with optional agent/model overrides. Run metadata persists across sessions.
 
 ---
 
@@ -54,7 +48,7 @@ MVP proved `pr-factory`; SDLC is the longer-horizon factory mode for larger work
 ## Future
 
 ### Local web dashboard
-Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API from **Now**.
+Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
 
 ### Remote workers
 Run agent stages on another machine or pool while keeping the control plane local.
