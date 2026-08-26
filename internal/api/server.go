@@ -192,11 +192,15 @@ func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, _ := s.engine.Store.GetRun(res.RunID)
+	warnings := res.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":            res.RunID,
 		"parent_run_id": run.ParentRunID,
 		"status":        string(run.Status),
-		"warnings":      res.Warnings,
+		"warnings":      warnings,
 	})
 }
 
