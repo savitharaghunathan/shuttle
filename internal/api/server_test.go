@@ -104,3 +104,66 @@ func TestCreateRunAndGetStatus(t *testing.T) {
 		t.Fatalf("stages=%+v want succeeded build stage", got.Stages)
 	}
 }
+
+func TestListRunsEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "built"},
+	}))
+	cfg := &config.Config{
+		WorkRoot:       filepath.Join(dir, ".shuttle"),
+		Concurrency:    1,
+		DefaultWorker:  "fake",
+		DefaultTimeout: 5 * time.Minute,
+	}
+	eng := pipeline.NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+	eng.TemplateLoader = func(id string) (*pipeline.Pipeline, error) {
+		return &pipeline.Pipeline{
+			ID: id,
+			Stages: []pipeline.Stage{
+				{ID: "build"},
+			},
+		}, nil
+	}
+
+	handler := api.NewHandler(eng, api.Options{
+		CWD:         dir,
+		PipelineIDs: []string{"demo"},
+	})
+
+	// create two runs
+	for i := 0; i < 2; i++ {
+		body := bytes.NewBufferString(`{"template_id":"demo"}`)
+		createReq := httptest.NewRequest(http.MethodPost, "/v1/runs", body)
+		createReq = createReq.WithContext(context.Background())
+		createReq.Header.Set("Content-Type", "application/json")
+		createResp := httptest.NewRecorder()
+		handler.ServeHTTP(createResp, createReq)
+		if createResp.Code != http.StatusCreated {
+			t.Fatalf("POST /v1/runs status=%d body=%s", createResp.Code, createResp.Body.String())
+		}
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/runs?limit=1", nil)
+	getResp := httptest.NewRecorder()
+	handler.ServeHTTP(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("GET /v1/runs status=%d body=%s", getResp.Code, getResp.Body.String())
+	}
+
+	var list []map[string]any
+	if err := json.Unmarshal(getResp.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("list len=%d want 1", len(list))
+	}
+}
