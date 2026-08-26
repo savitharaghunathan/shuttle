@@ -230,3 +230,63 @@ func TestRegistryIncludesCoreWorkers(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryRegistersCustomWorkerFromConfig(t *testing.T) {
+	reg := worker.NewRegistry(&config.Config{
+		Workers: map[string]config.WorkerPreset{
+			"goose": {
+				Bin:  "/bin/sh",
+				Args: []string{"-c", "printf '%s' \"$1\"", "sh", "{{.Prompt}}"},
+			},
+		},
+	})
+
+	w, ok := reg.Get("goose")
+	if !ok {
+		t.Fatal("Get(goose) ok = false, want true")
+	}
+
+	res, err := w.Execute(context.Background(), worker.Request{Prompt: "custom-runtime"})
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	if res.Status != worker.StatusSucceeded || res.Summary != "custom-runtime" {
+		t.Fatalf("result = %+v err = %v", res, err)
+	}
+}
+
+func TestPresetExecuteOmitsEmptyModelArgs(t *testing.T) {
+	w := worker.NewPresetWorker("claude", config.WorkerPreset{
+		Bin: "/bin/sh",
+		Args: []string{
+			"-c",
+			"printf 'args:%s' \"$*\"",
+			"sh",
+			"{{if .Model}}--model{{end}}",
+			"{{.Model}}",
+			"{{.Prompt}}",
+		},
+	})
+
+	res, err := w.Execute(context.Background(), worker.Request{Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	if res.Status != worker.StatusSucceeded {
+		t.Fatalf("Status = %q, want %q", res.Status, worker.StatusSucceeded)
+	}
+	if res.Summary != "args:hello" {
+		t.Fatalf("Summary = %q, want args without model flags", res.Summary)
+	}
+
+	res, err = w.Execute(context.Background(), worker.Request{
+		Prompt: "hello",
+		Model:  "claude-4-sonnet",
+	})
+	if err != nil {
+		t.Fatalf("Execute(model) = %v", err)
+	}
+	if res.Summary != "args:--model claude-4-sonnet hello" {
+		t.Fatalf("Summary = %q, want model in argv", res.Summary)
+	}
+}

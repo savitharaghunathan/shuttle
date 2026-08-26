@@ -47,6 +47,13 @@ type Registry struct {
 	workers map[string]Worker
 }
 
+var builtinWorkers = map[string]bool{
+	"shell":  true,
+	"exec":   true,
+	"intake": true,
+	"manual": true,
+}
+
 func NewRegistry(cfg *config.Config) *Registry {
 	presets := config.DefaultWorkerPresets()
 	if cfg != nil {
@@ -60,8 +67,11 @@ func NewRegistry(cfg *config.Config) *Registry {
 		"exec":   NewExecWorker(),
 		"intake": NewIntakeWorker(),
 	}
-	for _, name := range []string{"claude", "codex", "opencode", "cursor"} {
-		workers[name] = NewPresetWorker(name, presets[name])
+	for name, preset := range presets {
+		if builtinWorkers[name] || preset.Bin == "" {
+			continue
+		}
+		workers[name] = NewPresetWorker(name, preset)
 	}
 
 	return &Registry{workers: workers}

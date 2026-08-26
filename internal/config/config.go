@@ -126,20 +126,33 @@ func DefaultWorkerPresets() map[string]WorkerPreset {
 			Bin: "/bin/bash",
 		},
 		"claude": {
-			Bin:  "claude",
-			Args: []string{"-p", "{{.Prompt}}"},
+			Bin: "claude",
+			Args: []string{
+				"{{if .Model}}--model{{end}}", "{{.Model}}",
+				"-p", "{{.Prompt}}",
+			},
 		},
 		"codex": {
-			Bin:  "codex",
-			Args: []string{"exec", "{{.Prompt}}"},
+			Bin: "codex",
+			Args: []string{
+				"{{if .Model}}--model{{end}}", "{{.Model}}",
+				"exec", "{{.Prompt}}",
+			},
 		},
 		"opencode": {
-			Bin:  "opencode",
-			Args: []string{"run", "{{.Prompt}}"},
+			Bin: "opencode",
+			Args: []string{
+				"{{if .Model}}--model{{end}}", "{{.Model}}",
+				"run", "{{.Prompt}}",
+			},
 		},
 		"cursor": {
-			Bin:  "cursor-agent",
-			Args: []string{"--trust", "--yolo", "--print", "{{.Prompt}}"},
+			Bin: "cursor-agent",
+			Args: []string{
+				"--trust", "--yolo",
+				"{{if .Model}}--model{{end}}", "{{.Model}}",
+				"--print", "{{.Prompt}}",
+			},
 		},
 	}
 }

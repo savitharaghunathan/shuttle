@@ -120,8 +120,8 @@ func newRunCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringVarP(&templateID, "template", "t", "", "template id (pr-factory, pr-factory-headless, sdlc)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "path to the task spec")
 	cmd.Flags().StringVar(&issueURL, "issue", "", "GitHub issue URL (requires imported repo)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent runtime for implement stages (claude, cursor, codex, opencode)")
-	cmd.Flags().StringVar(&model, "model", "", "model passed to agent runtime")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent runtime for implement stages (built-ins or any workers: name in shuttle.yaml)")
+	cmd.Flags().StringVar(&model, "model", "", "model passed to agent runtime ({{.Model}} in preset args)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "run without manual approval gates")
 	return cmd
 }

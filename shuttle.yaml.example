@@ -13,13 +13,16 @@ workers:
     shell: /bin/bash
   claude:
     bin: claude
-    args: ["-p", "{{.Prompt}}"]
+    args: ["{{if .Model}}--model{{end}}", "{{.Model}}", "-p", "{{.Prompt}}"]
   codex:
     bin: codex
-    args: ["exec", "{{.Prompt}}"]
+    args: ["{{if .Model}}--model{{end}}", "{{.Model}}", "exec", "{{.Prompt}}"]
   opencode:
     bin: opencode
-    args: ["run", "{{.Prompt}}"]
+    args: ["{{if .Model}}--model{{end}}", "{{.Model}}", "run", "{{.Prompt}}"]
   cursor:
     bin: cursor-agent
-    args: ["--trust", "--yolo", "--print", "{{.Prompt}}"]
+    args: ["--trust", "--yolo", "{{if .Model}}--model{{end}}", "{{.Model}}", "--print", "{{.Prompt}}"]
+  # goose:
+  #   bin: goose
+  #   args: ["run", "{{.Prompt}}"]

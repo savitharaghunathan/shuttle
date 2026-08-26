@@ -33,6 +33,9 @@ func (w *PresetWorker) Execute(ctx context.Context, req Request) (Result, error)
 		if err != nil {
 			return Result{Status: StatusFailed}, fmt.Errorf("worker %q render arg %d: %w", w.name, i, err)
 		}
+		if rendered == "" {
+			continue
+		}
 		args = append(args, rendered)
 	}
 

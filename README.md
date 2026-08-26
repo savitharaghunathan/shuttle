@@ -25,12 +25,25 @@ Build the CLI from the repository:
 
 ```bash
 go build -o bin/shuttle ./cmd/shuttle
+# or
+make build
 ```
 
 You can also run without building:
 
 ```bash
 go run ./cmd/shuttle workers
+```
+
+### Make targets
+
+```bash
+make help               # list targets
+make build              # bin/shuttle
+make test-unit          # unit tests (fast; no integration tag)
+make test-integration   # CLI pipeline integration tests
+make test               # unit + integration
+make verify             # build + test
 ```
 
 ## Import repos
@@ -103,12 +116,16 @@ open_pr:
 workers:
   cursor:
     bin: cursor-agent
-    args: ["--trust", "--yolo", "--print", "{{.Prompt}}"]
+    args: ["--trust", "--yolo", "{{if .Model}}--model{{end}}", "{{.Model}}", "--print", "{{.Prompt}}"]
+  # Any CLI with a bin becomes a usable --agent:
+  # goose:
+  #   bin: goose
+  #   args: ["run", "{{.Prompt}}"]
 ```
 
-`--agent` and `--model` on `shuttle run` override the default worker and are passed into preset arg templates.
+`--agent` and `--model` on `shuttle run` override the default worker and are passed into preset arg templates (`{{.Prompt}}`, `{{.Model}}`). If `--model` is unset, empty template args are dropped so the CLI is not passed blank flags.
 
-Built-in agent runtimes: `claude`, `codex`, `opencode`, `cursor`. Also: `intake`, `shell`, `exec`, `manual`.
+Built-in agent presets: `claude`, `codex`, `opencode`, `cursor`. Add any other agent under `workers:` in `shuttle.yaml` and use `--agent <name>` — no code change required. List registered workers with `shuttle workers`. Also: `intake`, `shell`, `exec`, `manual`.
 
 ## Pipelines
 

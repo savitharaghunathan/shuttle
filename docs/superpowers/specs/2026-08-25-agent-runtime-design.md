@@ -57,18 +57,21 @@ CLI/API
 
 Stages without explicit `worker:` use run-level `--agent` (fallback: shuttle.yaml `default_worker`).
 
-Worker preset args support templates:
+Worker preset args support templates (`{{.Prompt}}`, `{{.Model}}`, …). Empty rendered args are omitted so optional model flags stay clean:
 
 ```yaml
 workers:
   cursor:
     bin: cursor-agent
-    args: ["--model", "{{.Model}}", "--print", "{{.Prompt}}"]
+    args: ["--trust", "--yolo", "{{if .Model}}--model{{end}}", "{{.Model}}", "--print", "{{.Prompt}}"]
+  goose:
+    bin: goose
+    args: ["run", "{{.Prompt}}"]
 ```
 
 `Request` fields: `Agent`, `Model`, `Prompt`, `WorkDir`, `RunDir`, …
 
-Built-in agents: `claude`, `codex`, `opencode`, `cursor`. Custom names via `workers:` map.
+**Registration:** every entry in the merged `workers:` map with a non-empty `bin` is registered as a preset worker, except reserved names (`shell`, `exec`, `intake`, `manual`). Built-in defaults ship for `claude`, `codex`, `opencode`, and `cursor`. Custom agents need only a `shuttle.yaml` block — no code change.
 
 ### Repo import contract
 
