@@ -40,6 +40,8 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 		newImportCommand(out),
 		newReposCommand(out),
 		newRunsCommand(out),
+		newResumeCommand(out),
+		newRetryCommand(out, errOut),
 		newStatusCommand(out),
 		newLogsCommand(out),
 		newApproveCommand(out),

@@ -13,6 +13,65 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func newResumeCommand(out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume <run-id>",
+		Short: "Resume a failed or cancelled run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := openApp()
+			if err != nil {
+				return err
+			}
+			defer app.close()
+			runID, err := app.store.ResolveRunID(args[0])
+			if err != nil {
+				return err
+			}
+			app.engine.Progress = out
+			if err := app.engine.ResumeRun(cmd.Context(), runID); err != nil {
+				return err
+			}
+			return printRun(out, app.store, runID, true, true)
+		},
+	}
+}
+
+func newRetryCommand(out, errOut io.Writer) *cobra.Command {
+	var agent, model string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "retry <run-id>",
+		Short: "Start a new run from a terminal run's spec",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := openApp()
+			if err != nil {
+				return err
+			}
+			defer app.close()
+			runID, err := app.store.ResolveRunID(args[0])
+			if err != nil {
+				return err
+			}
+			app.engine.Progress = out
+			res, err := app.engine.RetryRun(cmd.Context(), runID, pipeline.RetryParams{Agent: agent, Model: model, Force: force})
+			if err != nil {
+				return err
+			}
+			for _, wmsg := range res.Warnings {
+				fmt.Fprintf(errOut, "warning: %s\n", wmsg)
+			}
+			fmt.Fprintf(out, "retry: %s (parent %s)\n", res.RunID, shortID(runID))
+			return printRun(out, app.store, res.RunID, true, true)
+		},
+	}
+	cmd.Flags().StringVar(&agent, "agent", "", "override agent for the new run")
+	cmd.Flags().StringVar(&model, "model", "", "override model for the new run")
+	cmd.Flags().BoolVar(&force, "force", false, "allow retry of a succeeded run")
+	return cmd
+}
+
 func newRunsCommand(out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "runs", Short: "Inspect runs"}
 	cmd.AddCommand(newRunsListCommand(out))
@@ -211,4 +270,3 @@ func writeRunsJSON(out io.Writer, app *appContext, runs []store.Run) error {
 	enc.SetIndent("", "  ")
 	return enc.Encode(list)
 }
-
