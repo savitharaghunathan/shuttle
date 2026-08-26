@@ -93,6 +93,19 @@ func archiveStageArtifacts(runDir string, stageIDs []string, ts time.Time) error
 	return nil
 }
 
+// RetryParams contains options for RetryRun.
+type RetryParams struct {
+	Agent string
+	Model string
+	Force bool
+}
+
+// RetryResult is returned by RetryRun with new run id and any git warnings.
+type RetryResult struct {
+	RunID    string
+	Warnings []string
+}
+
 // copyTree copies a file or directory tree (cross-device rename fallback).
 func copyTree(src, dst string) error {
 	info, err := os.Stat(src)
@@ -212,4 +225,83 @@ func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
 	}
 	// refresh cached pipeline/runOpts already done by EnsurePipeline
 	return e.RunUntilBlockOrDone(ctx, runID)
+}
+
+// RetryRun creates a new run reusing a parent's spec and honoring overrides.
+func (e *Engine) RetryRun(ctx context.Context, runID string, p RetryParams) (RetryResult, error) {
+	parent, err := e.Store.GetRun(runID)
+	if err != nil {
+		return RetryResult{}, err
+	}
+	switch parent.Status {
+	case store.RunStatusFailed, store.RunStatusCancelled:
+		// ok
+	case store.RunStatusSucceeded:
+		if !p.Force {
+			return RetryResult{}, fmt.Errorf("run %s succeeded; use --force to retry", shortRunID(runID))
+		}
+	default:
+		return RetryResult{}, fmt.Errorf("run %s status is %s, cannot retry", shortRunID(runID), parent.Status)
+	}
+
+	specPath := filepath.Join(parent.RunDir, "inputs", "spec.md")
+	if _, err := os.Stat(specPath); err != nil {
+		return RetryResult{}, fmt.Errorf("run %s has no spec to retry (%s)", shortRunID(runID), specPath)
+	}
+
+	agent := parent.Agent
+	if p.Agent != "" {
+		agent = p.Agent
+	}
+	model := parent.Model
+	if p.Model != "" {
+		model = p.Model
+	}
+
+	if e.TemplateLoader == nil {
+		return RetryResult{}, fmt.Errorf("no TemplateLoader configured")
+	}
+	pl, err := e.TemplateLoader(parent.TemplateID)
+	if err != nil {
+		return RetryResult{}, fmt.Errorf("load template %q: %w", parent.TemplateID, err)
+	}
+
+	// validate template/stages against DB
+	stages, err := e.Store.GetStageRuns(runID)
+	if err != nil {
+		return RetryResult{}, err
+	}
+	if err := e.validateTemplate(runID, pl, stages); err != nil {
+		return RetryResult{}, err
+	}
+	if err := e.validateWorkers(runID, stages); err != nil {
+		return RetryResult{}, err
+	}
+
+	// explicit worker validation for overridden/resolved agent
+	if agent != "" && !builtinWorkers[agent] {
+		if _, ok := e.Registry.Get(agent); !ok {
+			return RetryResult{}, fmt.Errorf("worker %q not configured; retry with --agent <name>", agent)
+		}
+	}
+
+	warnings := GitPreflight(parent.CWD)
+
+	newID, err := e.StartRun(ctx, StartParams{
+		TemplateID:  parent.TemplateID,
+		Pipeline:    pl,
+		CWD:         parent.CWD,
+		SpecPath:    specPath,
+		Agent:       agent,
+		Model:       model,
+		IssueRef:    parent.IssueRef,
+		ParentRunID: parent.ID,
+	})
+	if err != nil {
+		return RetryResult{}, err
+	}
+	if err := e.RunUntilBlockOrDone(ctx, newID); err != nil {
+		return RetryResult{RunID: newID, Warnings: warnings}, err
+	}
+	return RetryResult{RunID: newID, Warnings: warnings}, nil
 }

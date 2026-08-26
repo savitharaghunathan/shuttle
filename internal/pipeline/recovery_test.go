@@ -250,3 +250,49 @@ func TestValidateWorkersMissing(t *testing.T) {
 		t.Fatalf("want worker error naming ghost, got %v", err)
 	}
 }
+
+func TestRetryFromFailedSetsParent(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{"impl": {Status: worker.StatusSucceeded, Summary: "ok"}})
+	p := &Pipeline{ID: "t", Stages: []Stage{{ID: "impl", Worker: "fake"}}}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	ctx := context.Background()
+	parent, _ := eng.StartRun(ctx, StartParams{TemplateID: "t", Pipeline: p, CWD: dir, SpecContent: "do the thing"})
+	_ = eng.RunUntilBlockOrDone(ctx, parent)
+	// force parent to failed for the guard
+	_ = eng.Store.UpdateRunStatus(parent, store.RunStatusFailed)
+
+	res, err := eng.RetryRun(ctx, parent, RetryParams{Agent: "shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := eng.Store.GetRun(res.RunID)
+	if child.ParentRunID != parent {
+		t.Fatalf("parent=%q want %q", child.ParentRunID, parent)
+	}
+	if child.Agent != "shell" {
+		t.Fatalf("agent override not applied: %q", child.Agent)
+	}
+	if child.Status != store.RunStatusSucceeded {
+		t.Fatalf("child run=%s want succeeded", child.Status)
+	}
+}
+
+func TestRetryFromSucceededRequiresForce(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{"impl": {Status: worker.StatusSucceeded, Summary: "ok"}})
+	p := &Pipeline{ID: "t", Stages: []Stage{{ID: "impl", Worker: "fake"}}}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	ctx := context.Background()
+	parent, _ := eng.StartRun(ctx, StartParams{TemplateID: "t", Pipeline: p, CWD: dir, SpecContent: "x"})
+	_ = eng.RunUntilBlockOrDone(ctx, parent) // succeeds
+
+	if _, err := eng.RetryRun(ctx, parent, RetryParams{}); err == nil {
+		t.Fatal("retry of succeeded run without --force should error")
+	}
+	res, err := eng.RetryRun(ctx, parent, RetryParams{Force: true})
+	if err != nil {
+		t.Fatalf("forced retry: %v", err)
+	}
+	if res.RunID == parent {
+		t.Fatal("retry must create a new run id")
+	}
+}
