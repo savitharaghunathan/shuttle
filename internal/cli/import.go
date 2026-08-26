@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -52,10 +51,7 @@ func newImportRepoCommand(out io.Writer) *cobra.Command {
 				return fmt.Errorf("github url required (or use --path / .)")
 			}
 
-			if err := os.MkdirAll(home.Dir(), 0o755); err != nil {
-				return err
-			}
-			reg, err := registry.Open(home.RegistryDB())
+			reg, err := openRegistry()
 			if err != nil {
 				return err
 			}
@@ -124,13 +120,4 @@ func openRegistry() (*registry.Registry, error) {
 		return nil, err
 	}
 	return registry.Open(home.RegistryDB())
-}
-
-func importRepo(ctx context.Context, rawURL string) (registry.Repo, error) {
-	reg, err := openRegistry()
-	if err != nil {
-		return registry.Repo{}, err
-	}
-	defer reg.Close()
-	return repo.Import(ctx, rawURL, reg, repo.ImportOpts{})
 }
