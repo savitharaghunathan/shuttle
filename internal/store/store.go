@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -39,13 +40,17 @@ type Store struct {
 }
 
 type Run struct {
-	ID         string
-	TemplateID string
-	Status     RunStatus
-	CWD        string
-	RunDir     string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID          string
+	TemplateID  string
+	Status      RunStatus
+	CWD         string
+	RunDir      string
+	Agent       string
+	Model       string
+	IssueRef    string
+	ParentRunID string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type StageRun struct {
@@ -60,6 +65,24 @@ type StageRun struct {
 	Summary   *string
 	LogPath   *string
 }
+
+type ListRunsOpts struct {
+	Limit      int
+	Statuses   []RunStatus
+	Agent      string
+	Model      string
+	ModelUnset bool
+	Template   string
+	IssueRef   string
+	Since      time.Time
+	ParentID   string
+}
+
+var (
+	ErrRunIDTooShort  = errors.New("run ID prefix too short (min 8 chars)")
+	ErrRunIDNotFound  = errors.New("run not found")
+	ErrRunIDAmbiguous = errors.New("ambiguous run ID prefix")
+)
 
 func Open(dbPath string) (*Store, error) {
 	db, err := sql.Open("sqlite", dbPath)
@@ -78,7 +101,30 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("migrate sqlite %s: %w", dbPath, err)
 	}
 
-	return &Store{db: db}, nil
+	st := &Store{db: db}
+	if err := st.migrateRuns(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate runs %s: %w", dbPath, err)
+	}
+	return st, nil
+}
+
+func migrateRuns(db *sql.DB) error {
+	for _, col := range []string{"agent", "model", "issue_ref", "parent_run_id"} {
+		_, err := db.Exec(fmt.Sprintf("ALTER TABLE runs ADD COLUMN %s TEXT NOT NULL DEFAULT ''", col))
+		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return fmt.Errorf("add column %s: %w", col, err)
+		}
+	}
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC)`)
+	if err != nil {
+		return fmt.Errorf("create runs index: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migrateRuns() error {
+	return migrateRuns(s.db)
 }
 
 func (s *Store) Close() error {
@@ -95,13 +141,17 @@ func (s *Store) CreateRun(run Run) error {
 	}
 
 	_, err := s.db.Exec(`
-INSERT INTO runs (id, template_id, status, cwd, run_dir, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO runs (id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID,
 		run.TemplateID,
 		string(run.Status),
 		run.CWD,
 		run.RunDir,
+		run.Agent,
+		run.Model,
+		run.IssueRef,
+		run.ParentRunID,
 		formatTime(run.CreatedAt),
 		formatTime(run.UpdatedAt),
 	)
@@ -113,7 +163,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 
 func (s *Store) GetRun(id string) (Run, error) {
 	row := s.db.QueryRow(`
-SELECT id, template_id, status, cwd, run_dir, created_at, updated_at
+SELECT id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, created_at, updated_at
 FROM runs
 WHERE id = ?`, id)
 
@@ -125,6 +175,122 @@ WHERE id = ?`, id)
 		return Run{}, err
 	}
 	return run, nil
+}
+
+// ResolveRunID resolves a possibly-short prefix to a full run ID.
+// Behavior:
+// - trims and lower-cases input
+// - exact match returns immediately
+// - prefixes shorter than 8 return ErrRunIDTooShort
+// - unique 8+ prefix returns the matching id
+// - ambiguous prefix returns ErrRunIDAmbiguous
+// - no matches returns ErrRunIDNotFound
+func (s *Store) ResolveRunID(prefix string) (string, error) {
+	p := strings.ToLower(strings.TrimSpace(prefix))
+	if p == "" {
+		return "", ErrRunIDNotFound
+	}
+	// exact match first
+	var exact string
+	err := s.db.QueryRow(`SELECT id FROM runs WHERE id = ?`, p).Scan(&exact)
+	if err == nil {
+		return exact, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("resolve run id: %w", err)
+	}
+	if len(p) < 8 {
+		return "", ErrRunIDTooShort
+	}
+	rows, err := s.db.Query(`SELECT id FROM runs WHERE id LIKE ? || '%' ORDER BY id LIMIT 2`, p)
+	if err != nil {
+		return "", fmt.Errorf("resolve run id: %w", err)
+	}
+	defer rows.Close()
+	var matches []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		matches = append(matches, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(matches) {
+	case 0:
+		return "", ErrRunIDNotFound
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("%w: %q matches multiple runs", ErrRunIDAmbiguous, p)
+	}
+}
+
+// ListRuns returns runs matching the provided filters, ordered newest first.
+func (s *Store) ListRuns(opts ListRunsOpts) ([]Run, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	var where []string
+	var args []any
+	if len(opts.Statuses) > 0 {
+		ph := make([]string, len(opts.Statuses))
+		for i, st := range opts.Statuses {
+			ph[i] = "?"
+			args = append(args, string(st))
+		}
+		where = append(where, "status IN ("+strings.Join(ph, ",")+")")
+	}
+	if opts.Agent != "" {
+		where = append(where, "agent = ?")
+		args = append(args, opts.Agent)
+	}
+	if opts.ModelUnset {
+		where = append(where, "model = ''")
+	} else if opts.Model != "" {
+		where = append(where, "model = ?")
+		args = append(args, opts.Model)
+	}
+	if opts.Template != "" {
+		where = append(where, "template_id = ?")
+		args = append(args, opts.Template)
+	}
+	if opts.IssueRef != "" {
+		where = append(where, "issue_ref = ?")
+		args = append(args, opts.IssueRef)
+	}
+	if opts.ParentID != "" {
+		where = append(where, "parent_run_id = ?")
+		args = append(args, opts.ParentID)
+	}
+	if !opts.Since.IsZero() {
+		where = append(where, "created_at >= ?")
+		args = append(args, formatTime(opts.Since))
+	}
+	q := `SELECT id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, created_at, updated_at FROM runs`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY created_at DESC, id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	defer rows.Close()
+	var runs []Run
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
 }
 
 func (s *Store) CreateStageRuns(stages []StageRun) error {
@@ -248,6 +414,10 @@ func scanRun(row interface {
 		&status,
 		&run.CWD,
 		&run.RunDir,
+		&run.Agent,
+		&run.Model,
+		&run.IssueRef,
+		&run.ParentRunID,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
