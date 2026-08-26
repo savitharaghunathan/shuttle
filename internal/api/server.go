@@ -40,6 +40,8 @@ func NewHandler(engine *pipeline.Engine, opts Options) http.Handler {
 	r.Get("/v1/runs", s.listRuns)
 	r.Post("/v1/runs", s.createRun)
 	r.Get("/v1/runs/{id}", s.getRun)
+	r.Post("/v1/runs/{id}/resume", s.resumeRun)
+	r.Post("/v1/runs/{id}/retry", s.retryRun)
 	r.Post("/v1/runs/{id}/cancel", s.cancelRun)
 	r.Post("/v1/runs/{id}/approve", s.approveRun)
 	r.Post("/v1/runs/{id}/reject", s.rejectRun)
@@ -62,16 +64,16 @@ type decisionRequest struct {
 }
 
 type runResponse struct {
-	ID         string          `json:"id"`
-	TemplateID string          `json:"template_id"`
-	Status     string          `json:"status"`
-	CWD        string          `json:"cwd"`
-	RunDir     string          `json:"run_dir"`
-	Agent      string          `json:"agent,omitempty"`
-	Model      string          `json:"model,omitempty"`
-	IssueRef   string          `json:"issue_ref,omitempty"`
-	ParentRunID string         `json:"parent_run_id,omitempty"`
-	Stages     []stageResponse `json:"stages"`
+	ID          string          `json:"id"`
+	TemplateID  string          `json:"template_id"`
+	Status      string          `json:"status"`
+	CWD         string          `json:"cwd"`
+	RunDir      string          `json:"run_dir"`
+	Agent       string          `json:"agent,omitempty"`
+	Model       string          `json:"model,omitempty"`
+	IssueRef    string          `json:"issue_ref,omitempty"`
+	ParentRunID string          `json:"parent_run_id,omitempty"`
+	Stages      []stageResponse `json:"stages"`
 }
 
 type stageResponse struct {
@@ -82,6 +84,12 @@ type stageResponse struct {
 	Retries int     `json:"retries"`
 	Summary *string `json:"summary,omitempty"`
 	LogPath *string `json:"log_path,omitempty"`
+}
+
+type retryRequest struct {
+	Agent string `json:"agent,omitempty"`
+	Model string `json:"model,omitempty"`
+	Force bool   `json:"force,omitempty"`
 }
 
 func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +161,43 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeRun(w, http.StatusOK, id)
+}
+
+func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
+	id, err := s.engine.Store.ResolveRunID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, httpStatusForError(err), err)
+		return
+	}
+	if err := s.engine.ResumeRun(r.Context(), id); err != nil {
+		writeError(w, recoveryHTTPStatus(err), err)
+		return
+	}
+	s.writeRun(w, http.StatusOK, id)
+}
+
+func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
+	id, err := s.engine.Store.ResolveRunID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, httpStatusForError(err), err)
+		return
+	}
+	var req retryRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req) // empty body OK
+	}
+	res, err := s.engine.RetryRun(r.Context(), id, pipeline.RetryParams{Agent: req.Agent, Model: req.Model, Force: req.Force})
+	if err != nil {
+		writeError(w, recoveryHTTPStatus(err), err)
+		return
+	}
+	run, _ := s.engine.Store.GetRun(res.RunID)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":            res.RunID,
+		"parent_run_id": run.ParentRunID,
+		"status":        string(run.Status),
+		"warnings":      res.Warnings,
+	})
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
@@ -325,16 +370,22 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 			}
 		}
 		out = append(out, runJSON{
-			ID:           run.ID,
-			ParentRunID:  run.ParentRunID,
-			Status:       string(run.Status),
-			Agent:        run.Agent,
-			Model:        run.Model,
-			TemplateID:   run.TemplateID,
-			IssueRef:     run.IssueRef,
-			CreatedAt:    run.CreatedAt.UTC().Format(time.RFC3339),
-			UpdatedAt:    run.UpdatedAt.UTC().Format(time.RFC3339),
-			WallDuration: int64(func() int64 { d := run.UpdatedAt.Sub(run.CreatedAt); if run.Status != store.RunStatusSucceeded && run.Status != store.RunStatusFailed && run.Status != store.RunStatusCancelled { d = time.Since(run.CreatedAt) }; return int64(d.Seconds()) }()),
+			ID:          run.ID,
+			ParentRunID: run.ParentRunID,
+			Status:      string(run.Status),
+			Agent:       run.Agent,
+			Model:       run.Model,
+			TemplateID:  run.TemplateID,
+			IssueRef:    run.IssueRef,
+			CreatedAt:   run.CreatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt:   run.UpdatedAt.UTC().Format(time.RFC3339),
+			WallDuration: int64(func() int64 {
+				d := run.UpdatedAt.Sub(run.CreatedAt)
+				if run.Status != store.RunStatusSucceeded && run.Status != store.RunStatusFailed && run.Status != store.RunStatusCancelled {
+					d = time.Since(run.CreatedAt)
+				}
+				return int64(d.Seconds())
+			}()),
 			CurrentStage: cs,
 		})
 	}
@@ -354,16 +405,16 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 	}
 
 	resp := runResponse{
-		ID:         run.ID,
-		TemplateID: run.TemplateID,
-		Status:     string(run.Status),
-		CWD:        run.CWD,
-		RunDir:     run.RunDir,
-		Agent:      run.Agent,
-		Model:      run.Model,
-		IssueRef:   run.IssueRef,
+		ID:          run.ID,
+		TemplateID:  run.TemplateID,
+		Status:      string(run.Status),
+		CWD:         run.CWD,
+		RunDir:      run.RunDir,
+		Agent:       run.Agent,
+		Model:       run.Model,
+		IssueRef:    run.IssueRef,
 		ParentRunID: run.ParentRunID,
-		Stages:     make([]stageResponse, 0, len(stages)),
+		Stages:      make([]stageResponse, 0, len(stages)),
 	}
 	for _, stage := range stages {
 		resp.Stages = append(resp.Stages, stageResponse{
@@ -394,4 +445,25 @@ func httpStatusForError(err error) int {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest
+}
+
+// recoveryHTTPStatus maps engine recovery errors to HTTP codes (409 for state/drift/worker).
+func recoveryHTTPStatus(err error) int {
+	msg := err.Error()
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return http.StatusNotFound
+	case strings.Contains(msg, "no spec"):
+		return http.StatusBadRequest
+	case strings.Contains(msg, "cannot resume"),
+		strings.Contains(msg, "cannot retry"),
+		strings.Contains(msg, "use --force"),
+		strings.Contains(msg, "no longer matches"),
+		strings.Contains(msg, "no longer configured"),
+		strings.Contains(msg, "not configured"),
+		strings.Contains(msg, "no stage to resume"):
+		return http.StatusConflict
+	default:
+		return http.StatusBadRequest
+	}
 }
