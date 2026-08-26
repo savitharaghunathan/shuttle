@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,4 +119,97 @@ func copyTree(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+// ResumeRun resumes a failed or cancelled run by finding the resume point
+// (earliest stage in template order that is failed/cancelled/rejected, or the
+// first skipped stage when the run was cancelled), archiving artifacts for the
+// reset stages, resetting them in the DB, updating the run status to running,
+// and continuing execution.
+func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
+	run, err := e.Store.GetRun(runID)
+	if err != nil {
+		return err
+	}
+	if run.Status != store.RunStatusFailed && run.Status != store.RunStatusCancelled {
+		return fmt.Errorf("run %s status is %s, cannot resume (want failed or cancelled)", shortRunID(runID), run.Status)
+	}
+	if err := e.EnsurePipeline(runID); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	pl := e.pipelines[runID]
+	e.mu.Unlock()
+	if pl == nil {
+		return fmt.Errorf("pipeline not loaded for run %s", shortRunID(runID))
+	}
+	stages, err := e.Store.GetStageRuns(runID)
+	if err != nil {
+		return err
+	}
+	if err := e.validateTemplate(runID, pl, stages); err != nil {
+		return err
+	}
+	if err := e.validateWorkers(runID, stages); err != nil {
+		return err
+	}
+
+	byID := make(map[string]store.StageRun, len(stages))
+	for _, sr := range stages {
+		byID[sr.StageID] = sr
+	}
+
+	// resume point: earliest stage (template order) in failed/cancelled/rejected,
+	// or skipped only when the run was cancelled and nothing else matched.
+	resumeIdx := -1
+	for i, st := range pl.Stages {
+		switch byID[st.ID].Status {
+		case store.StageStatusFailed, store.StageStatusCancelled, store.StageStatusRejected:
+			resumeIdx = i
+		}
+		if resumeIdx >= 0 {
+			break
+		}
+	}
+	if resumeIdx == -1 && run.Status == store.RunStatusCancelled {
+		for i, st := range pl.Stages {
+			if byID[st.ID].Status == store.StageStatusSkipped {
+				resumeIdx = i
+				break
+			}
+		}
+	}
+	if resumeIdx == -1 {
+		return fmt.Errorf("run %s has no stage to resume", shortRunID(runID))
+	}
+
+	// stages to reset: resume point + all downstream (template order)
+	var resetIDs []string
+	var updates []store.StageRun
+	for i := resumeIdx; i < len(pl.Stages); i++ {
+		sr := byID[pl.Stages[i].ID]
+		resetIDs = append(resetIDs, sr.StageID)
+		if i == resumeIdx {
+			sr.Status = store.StageStatusReady
+		} else {
+			sr.Status = store.StageStatusPending
+		}
+		sr.Attempt = 0
+		sr.Summary = nil
+		sr.LogPath = nil
+		updates = append(updates, sr)
+	}
+
+	// filesystem first (archive), then DB transaction
+	if err := archiveStageArtifacts(run.RunDir, resetIDs, time.Now().UTC()); err != nil {
+		return fmt.Errorf("archive on resume: %w", err)
+	}
+	if err := e.Store.ResetStages(updates); err != nil {
+		return err
+	}
+	if err := e.Store.UpdateRunStatus(runID, store.RunStatusRunning); err != nil {
+		return err
+	}
+	// refresh cached pipeline/runOpts already done by EnsurePipeline
+	return e.RunUntilBlockOrDone(ctx, runID)
 }
