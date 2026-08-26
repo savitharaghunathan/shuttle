@@ -383,6 +383,34 @@ WHERE id = ?`,
 	return nil
 }
 
+func (s *Store) ResetStages(updates []StageRun) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin reset stages: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	stmt, err := tx.Prepare(`
+UPDATE stage_runs SET status = ?, attempt = ?, retries = ?, timeout_ms = ?, summary = ?, log_path = ?
+WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare reset stages: %w", err)
+	}
+	defer stmt.Close()
+	for _, st := range updates {
+		if _, err = stmt.Exec(string(st.Status), st.Attempt, st.Retries, st.TimeoutMS, st.Summary, st.LogPath, st.ID); err != nil {
+			return fmt.Errorf("reset stage %s: %w", st.ID, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit reset stages: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ListWaitingApproval() ([]StageRun, error) {
 	rows, err := s.db.Query(`
 SELECT id, run_id, stage_id, worker, status, attempt, retries, timeout_ms, summary, log_path
