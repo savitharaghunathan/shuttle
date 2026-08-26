@@ -2,7 +2,10 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/savitharaghunathan/shuttle/internal/store"
 )
@@ -58,4 +61,61 @@ func shortRunID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+func recoveryStamp(ts time.Time) string { return ts.UTC().Format("20060102T150405Z") }
+
+func archiveStageArtifacts(runDir string, stageIDs []string, ts time.Time) error {
+	base := filepath.Join(runDir, ".recovery", recoveryStamp(ts))
+	for _, id := range stageIDs {
+		dst := filepath.Join(base, id)
+		sources := []string{
+			filepath.Join(runDir, "logs", id+".log"),
+			filepath.Join(runDir, "artifacts", id), // dir or legacy file
+		}
+		for _, src := range sources {
+			if _, err := os.Stat(src); err != nil {
+				continue // missing is fine
+			}
+			if err := os.MkdirAll(dst, 0o755); err != nil {
+				return fmt.Errorf("mkdir recovery %s: %w", dst, err)
+			}
+			target := filepath.Join(dst, filepath.Base(src))
+			if err := os.Rename(src, target); err != nil {
+				if err := copyTree(src, target); err != nil {
+					return fmt.Errorf("archive %s: %w", src, err)
+				}
+				_ = os.RemoveAll(src)
+			}
+		}
+	}
+	return nil
+}
+
+// copyTree copies a file or directory tree (cross-device rename fallback).
+func copyTree(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, info.Mode())
+	}
+	if err := os.MkdirAll(dst, info.Mode()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
