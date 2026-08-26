@@ -25,6 +25,8 @@ type StartParams struct {
 	SpecContent string
 	Agent       string
 	Model       string
+	IssueRef    string
+	ParentRunID string
 }
 
 type Engine struct {
@@ -90,7 +92,8 @@ func (e *Engine) EnsurePipeline(runID string) error {
 	if err != nil {
 		return fmt.Errorf("ensure pipeline: load template %q: %w", run.TemplateID, err)
 	}
-	pl = e.applyDefaults(pl, "")
+	// apply defaults using the persisted resolved agent so stage workers match what was saved
+	pl = e.applyDefaults(pl, run.Agent)
 
 	specPath := filepath.Join(run.RunDir, "inputs", "spec.md")
 	if _, statErr := os.Stat(specPath); statErr != nil {
@@ -102,6 +105,8 @@ func (e *Engine) EnsurePipeline(runID string) error {
 	if specPath != "" {
 		e.specPaths[runID] = specPath
 	}
+	// restore run options (agent/model) from the DB so fresh engines use the same settings
+	e.runOpts[runID] = runOptions{Agent: run.Agent, Model: run.Model}
 	e.mu.Unlock()
 	return nil
 }
@@ -128,17 +133,34 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		}
 	}
 
+	// Resolve pipeline defaults and the resolved agent before persisting the run.
+	pl := e.applyDefaults(p.Pipeline, p.Agent)
+
+	resolvedAgent := p.Agent
+	if resolvedAgent == "" {
+		resolvedAgent = e.Cfg.DefaultWorker
+	}
+
+	// Validate parent run exists (if provided) before creating the new run.
+	if p.ParentRunID != "" {
+		if _, err := e.Store.GetRun(p.ParentRunID); err != nil {
+			return "", fmt.Errorf("parent run %s: %w", p.ParentRunID, err)
+		}
+	}
+
 	if err := e.Store.CreateRun(store.Run{
-		ID:         runID,
-		TemplateID: p.TemplateID,
-		Status:     store.RunStatusRunning,
-		CWD:        p.CWD,
-		RunDir:     runDir,
+		ID:          runID,
+		TemplateID:  p.TemplateID,
+		Status:      store.RunStatusRunning,
+		CWD:         p.CWD,
+		RunDir:      runDir,
+		Agent:       resolvedAgent,
+		Model:       p.Model,
+		IssueRef:    p.IssueRef,
+		ParentRunID: p.ParentRunID,
 	}); err != nil {
 		return "", fmt.Errorf("create run: %w", err)
 	}
-
-	pl := e.applyDefaults(p.Pipeline, p.Agent)
 
 	var stageRuns []store.StageRun
 	for _, stage := range pl.Stages {
@@ -179,7 +201,7 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 	if p.SpecPath != "" {
 		e.specPaths[runID] = p.SpecPath
 	}
-	e.runOpts[runID] = runOptions{Agent: p.Agent, Model: p.Model}
+	e.runOpts[runID] = runOptions{Agent: resolvedAgent, Model: p.Model}
 	e.mu.Unlock()
 
 	return runID, nil
