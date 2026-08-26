@@ -11,6 +11,7 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/config"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
+	"github.com/savitharaghunathan/shuttle/internal/worker/workertest"
 )
 
 func newTestEngine(t *testing.T, results map[string]worker.Result) (*Engine, string) {
@@ -24,7 +25,7 @@ func newTestEngine(t *testing.T, results map[string]worker.Result) (*Engine, str
 	t.Cleanup(func() { s.Close() })
 
 	reg := worker.NewRegistry(nil)
-	reg.Register("fake", worker.NewFakeWorker(results))
+	reg.Register("fake", workertest.NewFakeWorker(results))
 
 	cfg := &config.Config{
 		WorkRoot:       filepath.Join(dir, ".shuttle"),
@@ -398,7 +399,7 @@ func TestCancel(t *testing.T) {
 
 // Cancel interrupts an in-flight slow Execute via context cancellation.
 func TestCancelInterruptsExecute(t *testing.T) {
-	fw := worker.NewFakeWorker(map[string]worker.Result{
+	fw := workertest.NewFakeWorker(map[string]worker.Result{
 		"slow": {Status: worker.StatusSucceeded, Summary: "done"},
 	})
 	fw.Delay = 10 * time.Second
@@ -512,7 +513,7 @@ func TestFreshEngineApproveAndContinue(t *testing.T) {
 	}
 
 	// Simulate a fresh CLI invocation: new Engine with same store, empty maps.
-	shipResults := worker.NewFakeWorker(map[string]worker.Result{
+	shipResults := workertest.NewFakeWorker(map[string]worker.Result{
 		"ship": {Status: worker.StatusSucceeded, Summary: "shipped"},
 	})
 	reg2 := worker.NewRegistry(nil)
@@ -715,5 +716,35 @@ func TestOutputsMaterialized(t *testing.T) {
 	}
 	if string(data) != "all green" {
 		t.Fatalf("output=%q want 'all green'", string(data))
+	}
+}
+
+// Persisted resolved agent must be restored by a fresh Engine.
+func TestPersistedAgentRestoredOnFreshEngine(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"a": {Status: worker.StatusSucceeded, Summary: "ok"},
+	})
+	// newTestEngine sets Cfg.DefaultWorker = "fake"; stage "a" (no explicit
+	// Worker) resolves to the fake, so resolvedAgent persists as "fake".
+	p := &Pipeline{ID: "t", Stages: []Stage{{ID: "a"}}}
+	runID, err := eng.StartRun(context.Background(), StartParams{TemplateID: "t", Pipeline: p, CWD: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _ := eng.Store.GetRun(runID)
+	if run.Agent == "" {
+		t.Fatalf("resolved agent not persisted")
+	}
+	// fresh engine sharing the same store; runOpts cache empty
+	eng2 := NewEngine(eng.Store, eng.Registry, eng.Cfg)
+	eng2.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	if err := eng2.EnsurePipeline(runID); err != nil {
+		t.Fatal(err)
+	}
+	eng2.mu.Lock()
+	opts := eng2.runOpts[runID]
+	eng2.mu.Unlock()
+	if opts.Agent != run.Agent {
+		t.Fatalf("runOpts.Agent=%q want %q", opts.Agent, run.Agent)
 	}
 }

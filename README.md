@@ -168,3 +168,32 @@ Workers execute with the invoking user's privileges. Agent presets invoke local 
 ## Concurrency
 
 Single writer per `.shuttle/shuttle.db`. Do not run multiple Shuttle processes against the same work root concurrently.
+
+## Listing runs
+
+List persisted runs for the current repo:
+
+```bash
+shuttle runs list
+shuttle runs list --agent cursor --status failed,running
+shuttle runs list --since 7d --limit 50
+shuttle runs list --model unset            # runs started without --model
+shuttle runs list --json
+```
+
+Note: DURATION is wall-clock (updated_at - created_at) and therefore includes time spent blocked at approval gates; use stage logs for agent-active time. Short run IDs (first 8 chars) work anywhere a run ID is accepted.
+
+## Resume and retry
+
+```bash
+shuttle resume <run-id>                 # continue a failed/cancelled run
+shuttle retry <run-id> --agent claude   # new run, same spec, different agent
+shuttle retry <run-id> --force          # retry a succeeded run (sharp edge)
+```
+
+- Resume is for terminal `failed`/`cancelled` only; use `approve`/`reject` for `blocked`.
+- **Do not edit pipeline YAML for in-flight runs** — template drift blocks resume.
+- Retry uses a **frozen spec** (`inputs/spec.md`); it does not re-fetch the issue — use `run --issue` for that.
+- Retry does **not** clean git; inspect `git status` / open PRs first. Warnings are advisory.
+- API resume/retry POSTs **block** for the full run; prefer the CLI for long recovery runs, or set a 30+ min client timeout.
+- Stale logs/artifacts for reset stages are archived under `<run-dir>/.recovery/` (not deleted; not auto-pruned).

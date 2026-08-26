@@ -203,20 +203,6 @@ func TestPresetExecuteMissingBinaryNamesWorker(t *testing.T) {
 	}
 }
 
-func TestFakeExecuteReturnsStageResult(t *testing.T) {
-	w := worker.NewFakeWorker(map[string]worker.Result{
-		"test": {Status: worker.StatusSucceeded, Summary: "done"},
-	})
-
-	res, err := w.Execute(context.Background(), worker.Request{StageID: "test"})
-	if err != nil {
-		t.Fatalf("Execute() = %v", err)
-	}
-	if res.Summary != "done" {
-		t.Fatalf("Summary = %q, want done", res.Summary)
-	}
-}
-
 func TestRegistryIncludesCoreWorkers(t *testing.T) {
 	reg := worker.NewRegistry(&config.Config{
 		Workers: map[string]config.WorkerPreset{

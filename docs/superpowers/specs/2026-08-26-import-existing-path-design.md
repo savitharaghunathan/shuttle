@@ -104,5 +104,4 @@ path: /Users/savee/local_dev/test
 - Single SQLite writer per DB file
 - Trust boundary unchanged: workers run as invoking user in the registered path
 - Prefer OSS libraries with **MIT or Apache-2.0** licenses; avoid shelling out when a suitable library exists (git ops: [go-git](https://github.com/go-git/go-git), Apache-2.0)
-- **Git commits:** `git commit -s` (Signed-off-by) plus body line `Assisted-by: Cursor <cursoragent@cursor.com>`. Do **not** add `Co-authored-by: Cursor <cursoragent@cursor.com>`.
 
