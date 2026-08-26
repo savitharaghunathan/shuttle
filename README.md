@@ -168,3 +168,17 @@ Workers execute with the invoking user's privileges. Agent presets invoke local 
 ## Concurrency
 
 Single writer per `.shuttle/shuttle.db`. Do not run multiple Shuttle processes against the same work root concurrently.
+
+## Listing runs
+
+List persisted runs for the current repo:
+
+```bash
+shuttle runs list
+shuttle runs list --agent cursor --status failed,running
+shuttle runs list --since 7d --limit 50
+shuttle runs list --model unset            # runs started without --model
+shuttle runs list --json
+```
+
+Note: DURATION is wall-clock (updated_at - created_at) and therefore includes time spent blocked at approval gates; use stage logs for agent-active time. Short run IDs (first 8 chars) work anywhere a run ID is accepted.
