@@ -11,6 +11,7 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/config"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
+	"github.com/savitharaghunathan/shuttle/internal/worker/workertest"
 )
 
 func newTestEngine(t *testing.T, results map[string]worker.Result) (*Engine, string) {
@@ -24,7 +25,7 @@ func newTestEngine(t *testing.T, results map[string]worker.Result) (*Engine, str
 	t.Cleanup(func() { s.Close() })
 
 	reg := worker.NewRegistry(nil)
-	reg.Register("fake", worker.NewFakeWorker(results))
+	reg.Register("fake", workertest.NewFakeWorker(results))
 
 	cfg := &config.Config{
 		WorkRoot:       filepath.Join(dir, ".shuttle"),
@@ -398,7 +399,7 @@ func TestCancel(t *testing.T) {
 
 // Cancel interrupts an in-flight slow Execute via context cancellation.
 func TestCancelInterruptsExecute(t *testing.T) {
-	fw := worker.NewFakeWorker(map[string]worker.Result{
+	fw := workertest.NewFakeWorker(map[string]worker.Result{
 		"slow": {Status: worker.StatusSucceeded, Summary: "done"},
 	})
 	fw.Delay = 10 * time.Second
@@ -512,7 +513,7 @@ func TestFreshEngineApproveAndContinue(t *testing.T) {
 	}
 
 	// Simulate a fresh CLI invocation: new Engine with same store, empty maps.
-	shipResults := worker.NewFakeWorker(map[string]worker.Result{
+	shipResults := workertest.NewFakeWorker(map[string]worker.Result{
 		"ship": {Status: worker.StatusSucceeded, Summary: "shipped"},
 	})
 	reg2 := worker.NewRegistry(nil)

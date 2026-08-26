@@ -27,10 +27,10 @@ Dry-run pipelines, per-stage logs, `approve`/`reject` gates, and embedded templa
 
 ## Now
 
-### Run recovery
-**Goal:** Resume or retry a failed run from the last good stage instead of starting over.
+### Runs view + recovery
+**Goal:** List and compare runs for the current repo (agent, status, time, issue), and resume or retry failed/cancelled runs instead of starting from scratch.
 
-Failed/cancelled runs are terminal today. Stage-level retries exist; run-level recovery does not.
+Today you can only inspect one run at a time (`status`, `logs`). Failed/cancelled runs are terminal. Agent/model choices are not persisted across CLI sessions.
 
 ---
 
@@ -52,6 +52,9 @@ MVP proved `pr-factory`; SDLC is the longer-horizon factory mode for larger work
 ---
 
 ## Future
+
+### Local web dashboard
+Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API from **Now**.
 
 ### Remote workers
 Run agent stages on another machine or pool while keeping the control plane local.

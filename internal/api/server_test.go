@@ -15,6 +15,7 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
+	"github.com/savitharaghunathan/shuttle/internal/worker/workertest"
 )
 
 func TestCreateRunAndGetStatus(t *testing.T) {
@@ -26,7 +27,7 @@ func TestCreateRunAndGetStatus(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	reg := worker.NewRegistry(nil)
-	reg.Register("fake", worker.NewFakeWorker(map[string]worker.Result{
+	reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
 		"build": {Status: worker.StatusSucceeded, Summary: "built"},
 	}))
 	cfg := &config.Config{
