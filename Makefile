@@ -5,7 +5,8 @@
 #   make test-unit         fast unit tests (no integration tag)
 #   make test-integration  CLI pipeline integration tests
 #   make test              unit + integration
-#   make verify            build + test
+#   make lint              go vet, gofmt, golangci-lint
+#   make verify            build + lint + test
 #   make serve-test-app    serve API from SHUTTLE_TEST_APP (~/local_dev/test)
 #   make smoke-test-app    API recovery smoke (server must be running)
 
@@ -17,12 +18,14 @@ CMD      := ./cmd/shuttle
 BIN      := bin/shuttle
 GO       ?= go
 GOFLAGS  ?=
+GOPATH_BIN := $(shell $(GO) env GOPATH)/bin
+GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || echo $(GOPATH_BIN)/golangci-lint)
 TEST_PKGS := ./...
 SHUTTLE_TEST_APP ?= $(HOME)/local_dev/test
 TEST_APP_SCRIPTS := examples/scripts
 
 .PHONY: help build install run clean \
-        test test-unit test-integration test-race verify \
+        lint test test-unit test-integration test-race verify \
         serve-test-app smoke-test-app
 
 .DEFAULT_GOAL := help
@@ -57,7 +60,16 @@ test: test-unit test-integration ## unit + integration tests
 test-race: ## unit tests with -race
 	$(GO) test $(GOFLAGS) -race -count=1 $(TEST_PKGS)
 
-verify: build test ## build and run all tests
+lint: ## go vet, gofmt, and golangci-lint
+	$(GO) vet ./...
+	@test -z "$$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
+	@test -x "$(GOLANGCI_LINT)" || { \
+		echo "golangci-lint not found; install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6"; \
+		exit 1; \
+	}
+	"$(GOLANGCI_LINT)" run ./...
+
+verify: build lint test ## build, lint, and run all tests
 
 serve-test-app: build ## serve API from SHUTTLE_TEST_APP checkout (port 8080)
 	SHUTTLE_TEST_APP="$(SHUTTLE_TEST_APP)" SHUTTLE_BIN="$(CURDIR)/$(BIN)" \

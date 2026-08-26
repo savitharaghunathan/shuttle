@@ -60,4 +60,3 @@ func CurrentStage(pl *Pipeline, stages []store.StageRun) string {
 	// 6
 	return "—"
 }
-

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -173,4 +174,34 @@ workers:
 			t.Fatalf("run output %q missing %q", runOutput, want)
 		}
 	}
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(1)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("module root not found")
+		}
+		dir = parent
+	}
+}
+
+func parseRunID(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "run: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "run: "))
+		}
+	}
+	t.Fatalf("run id not found in output %q", output)
+	return ""
 }

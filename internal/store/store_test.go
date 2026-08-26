@@ -208,14 +208,14 @@ func TestResetStagesAtomic(t *testing.T) {
 func TestRunMetadataRoundTrip(t *testing.T) {
 	s := openTempStore(t)
 	err := s.CreateRun(store.Run{
-		ID:        "run-1",
+		ID:         "run-1",
 		TemplateID: "pr-factory-headless",
-		Status:    store.RunStatusRunning,
-		CWD:       "/tmp/x",
-		RunDir:    "/tmp/x/.shuttle/runs/run-1",
-		Agent:     "cursor",
-		Model:     "claude-4-sonnet",
-		IssueRef:  "org/repo#42",
+		Status:     store.RunStatusRunning,
+		CWD:        "/tmp/x",
+		RunDir:     "/tmp/x/.shuttle/runs/run-1",
+		Agent:      "cursor",
+		Model:      "claude-4-sonnet",
+		IssueRef:   "org/repo#42",
 	})
 	if err != nil {
 		t.Fatal(err)

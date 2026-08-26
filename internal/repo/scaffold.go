@@ -10,13 +10,13 @@ import (
 )
 
 type scaffoldConfig struct {
-	DefaultWorker  string                 `yaml:"default_worker"`
-	WorkRoot       string                 `yaml:"work_root"`
-	Concurrency    int                    `yaml:"concurrency"`
-	DefaultTimeout string                 `yaml:"default_timeout"`
-	Test           scaffoldStage          `yaml:"test"`
-	OpenPR         scaffoldStage          `yaml:"open_pr"`
-	Ship           scaffoldStage          `yaml:"ship"`
+	DefaultWorker  string                    `yaml:"default_worker"`
+	WorkRoot       string                    `yaml:"work_root"`
+	Concurrency    int                       `yaml:"concurrency"`
+	DefaultTimeout string                    `yaml:"default_timeout"`
+	Test           scaffoldStage             `yaml:"test"`
+	OpenPR         scaffoldStage             `yaml:"open_pr"`
+	Ship           scaffoldStage             `yaml:"ship"`
 	Workers        map[string]scaffoldWorker `yaml:"workers"`
 }
 

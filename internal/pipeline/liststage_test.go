@@ -45,4 +45,3 @@ func TestCurrentStage(t *testing.T) {
 		t.Fatalf("empty=%q want \"\"", got)
 	}
 }
-
