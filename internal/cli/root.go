@@ -39,6 +39,7 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 		newRunCommand(out),
 		newImportCommand(out),
 		newReposCommand(out),
+		newRunsCommand(out),
 		newStatusCommand(out),
 		newLogsCommand(out),
 		newApproveCommand(out),
@@ -85,7 +86,7 @@ func newRunCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 
-			cwd, specContent, err := resolveRunInput(cmd.Context(), issueURL, specPath)
+			cwd, specContent, issueRef, err := resolveRunInput(cmd.Context(), issueURL, specPath)
 			if err != nil {
 				return err
 			}
@@ -104,6 +105,7 @@ func newRunCommand(out io.Writer) *cobra.Command {
 				SpecContent: specContent,
 				Agent:       agent,
 				Model:       model,
+				IssueRef:    issueRef,
 			})
 			if err != nil {
 				return err
@@ -137,7 +139,11 @@ func newStatusCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 			defer app.close()
-			return printRun(out, app.store, args[0], false)
+			runID, err := resolveRunArg(app, args[0])
+			if err != nil {
+				return err
+			}
+			return printRun(out, app.store, runID, false)
 		},
 	}
 }
@@ -153,8 +159,11 @@ func newLogsCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 			defer app.close()
-
-			stages, err := app.store.GetStageRuns(args[0])
+			runID, err := resolveRunArg(app, args[0])
+			if err != nil {
+				return err
+			}
+			stages, err := app.store.GetStageRuns(runID)
 			if err != nil {
 				return err
 			}
@@ -181,7 +190,7 @@ func newLogsCommand(out io.Writer) *cobra.Command {
 				}
 			}
 			if !wrote {
-				return fmt.Errorf("no logs found for run %s", args[0])
+				return fmt.Errorf("no logs found for run %s", runID)
 			}
 			return nil
 		},
@@ -200,12 +209,16 @@ func newApproveCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 			defer app.close()
-			if err := app.engine.Approve(args[0], args[1], message); err != nil {
+			runID, err := resolveRunArg(app, args[0])
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "approved: %s %s\n\n", args[0], args[1])
+			if err := app.engine.Approve(runID, args[1], message); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "approved: %s %s\n\n", runID, args[1])
 			app.engine.Progress = out
-			if err := app.engine.RunUntilBlockOrDone(cmd.Context(), args[0]); err != nil {
+			if err := app.engine.RunUntilBlockOrDone(cmd.Context(), runID); err != nil {
 				return err
 			}
 			return printRun(out, app.store, args[0], true, true)
@@ -227,10 +240,14 @@ func newRejectCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 			defer app.close()
-			if err := app.engine.Reject(args[0], args[1], message); err != nil {
+			runID, err := resolveRunArg(app, args[0])
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "rejected: %s %s\n", args[0], args[1])
+			if err := app.engine.Reject(runID, args[1], message); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "rejected: %s %s\n", runID, args[1])
 			return nil
 		},
 	}
@@ -249,10 +266,14 @@ func newCancelCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 			defer app.close()
-			if err := app.engine.Cancel(args[0]); err != nil {
+			runID, err := resolveRunArg(app, args[0])
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "cancelled: %s\n", args[0])
+			if err := app.engine.Cancel(runID); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "cancelled: %s\n", runID)
 			return nil
 		},
 	}
@@ -372,36 +393,43 @@ func loadConfigInDir(cwd string) (*config.Config, error) {
 	return nil, err
 }
 
-func resolveRunInput(ctx context.Context, issueURL, specPath string) (cwd, specContent string, err error) {
+func resolveRunInput(ctx context.Context, issueURL, specPath string) (cwd, specContent, issueRef string, err error) {
 	if issueURL == "" {
 		cwd, err = os.Getwd()
-		return cwd, "", err
+		return cwd, "", "", err
 	}
 
 	owner, name, number, err := issue.ParseIssueURL(issueURL)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	reg, err := openRegistry()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer reg.Close()
 
 	entry, err := reg.Get(owner, name)
 	if err != nil {
 		if errors.Is(err, registry.ErrNotFound) {
-			return "", "", fmt.Errorf("repo %s/%s not imported; run: shuttle import repo https://github.com/%s/%s", owner, name, owner, name)
+			return "", "", "", fmt.Errorf("repo %s/%s not imported; run: shuttle import repo https://github.com/%s/%s", owner, name, owner, name)
 		}
-		return "", "", err
+		return "", "", "", err
 	}
 
 	specContent, err = issue.FetchSpec(ctx, owner, name, number)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return entry.Path, specContent, nil
+	return entry.Path, specContent, fmt.Sprintf("%s/%s#%d", owner, name, number), nil
+}
+
+func resolveRunArg(app *appContext, arg string) (string, error) {
+	if arg == "" {
+		return "", fmt.Errorf("empty run id")
+	}
+	return app.store.ResolveRunID(arg)
 }
 
 func loadPipelineTemplate(templateID string) (*pipeline.Pipeline, error) {
