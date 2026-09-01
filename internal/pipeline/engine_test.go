@@ -1043,3 +1043,39 @@ func TestImplementSucceedsWhenExpectedRemoteBranchPresent(t *testing.T) {
 		t.Fatalf("implement status=%q want succeeded", sm["implement"].Status)
 	}
 }
+
+func TestStartRunWarnsOnConcurrentIssue(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "ok"},
+	})
+	p := &Pipeline{ID: "t", Stages: []Stage{{ID: "build"}}}
+	ctx := context.Background()
+
+	activeID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "t",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "t",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	warns := eng.StartWarnings(nextID)
+	if len(warns) == 0 {
+		t.Fatalf("want concurrent-issue warning, got none")
+	}
+	want := "another run for org/repo#42 is already active (" + activeID + "); concurrent work may conflict on branch shuttle/issue-42"
+	if warns[0] != want {
+		t.Fatalf("warning=%q want %q", warns[0], want)
+	}
+}

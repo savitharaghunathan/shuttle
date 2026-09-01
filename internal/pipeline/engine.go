@@ -50,6 +50,7 @@ type Engine struct {
 	specPaths map[string]string
 	runOpts   map[string]runOptions
 	cancels   map[string]context.CancelFunc
+	startWarn map[string][]string
 }
 
 type runOptions struct {
@@ -67,6 +68,7 @@ func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine
 		specPaths:    make(map[string]string),
 		runOpts:      make(map[string]runOptions),
 		cancels:      make(map[string]context.CancelFunc),
+		startWarn:    make(map[string][]string),
 	}
 }
 
@@ -149,6 +151,11 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		}
 	}
 
+	startWarnings, err := e.concurrentIssueWarnings(p.IssueRef)
+	if err != nil {
+		return "", err
+	}
+
 	if err := e.Store.CreateRun(store.Run{
 		ID:          runID,
 		TemplateID:  p.TemplateID,
@@ -203,9 +210,52 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		e.specPaths[runID] = p.SpecPath
 	}
 	e.runOpts[runID] = runOptions{Agent: resolvedAgent, Model: p.Model}
+	if len(startWarnings) > 0 {
+		e.startWarn[runID] = append([]string(nil), startWarnings...)
+	}
 	e.mu.Unlock()
 
 	return runID, nil
+}
+
+func (e *Engine) StartWarnings(runID string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	warns := e.startWarn[runID]
+	return append([]string(nil), warns...)
+}
+
+func (e *Engine) concurrentIssueWarnings(issueRef string) ([]string, error) {
+	if strings.TrimSpace(issueRef) == "" {
+		return nil, nil
+	}
+	runs, err := e.Store.ListRuns(store.ListRunsOpts{
+		Limit:    100,
+		IssueRef: issueRef,
+		Statuses: []store.RunStatus{
+			store.RunStatusPending,
+			store.RunStatusRunning,
+			store.RunStatusBlocked,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list active issue runs: %w", err)
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	branch, err := issue.BranchName(issueRef, "")
+	if err != nil {
+		return nil, nil
+	}
+	return []string{
+		fmt.Sprintf(
+			"another run for %s is already active (%s); concurrent work may conflict on branch %s",
+			issueRef,
+			runs[0].ID,
+			branch,
+		),
+	}, nil
 }
 
 func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {

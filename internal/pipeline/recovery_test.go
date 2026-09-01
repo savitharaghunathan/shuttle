@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
 )
@@ -294,5 +295,51 @@ func TestRetryFromSucceededRequiresForce(t *testing.T) {
 	}
 	if res.RunID == parent {
 		t.Fatal("retry must create a new run id")
+	}
+}
+
+func TestRetryPreflightUsesResolvedParentBranch(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{"impl": {Status: worker.StatusSucceeded, Summary: "ok"}})
+	p := &Pipeline{ID: "t", Stages: []Stage{{ID: "impl", Worker: "fake"}}}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	ctx := context.Background()
+
+	parent, err := eng.StartRun(ctx, StartParams{TemplateID: "t", Pipeline: p, CWD: dir, SpecContent: "parent spec"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = eng.RunUntilBlockOrDone(ctx, parent)
+	if err := eng.Store.UpdateRunStatus(parent, store.RunStatusFailed); err != nil {
+		t.Fatal(err)
+	}
+
+	parentRun, err := eng.Store.GetRun(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBranch, err := issue.ResolveBranch(parentRun.IssueRef, parentRun.ID, parentRun.ParentRunID, func(id string) (string, string, string, error) {
+		r, err := eng.Store.GetRun(id)
+		if err != nil {
+			return "", "", "", err
+		}
+		return r.IssueRef, r.ID, r.ParentRunID, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origPreflight := gitPreflight
+	t.Cleanup(func() { gitPreflight = origPreflight })
+	var gotBranch string
+	gitPreflight = func(cwd, branch string) []string {
+		gotBranch = branch
+		return nil
+	}
+
+	if _, err := eng.RetryRun(ctx, parent, RetryParams{}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBranch != wantBranch {
+		t.Fatalf("preflight branch=%q want %q", gotBranch, wantBranch)
 	}
 }
