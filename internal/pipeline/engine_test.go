@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -892,5 +893,153 @@ func TestPersistedAgentRestoredOnFreshEngine(t *testing.T) {
 	eng2.mu.Unlock()
 	if opts.Agent != run.Agent {
 		t.Fatalf("runOpts.Agent=%q want %q", opts.Agent, run.Agent)
+	}
+}
+
+func TestImplementFailsWhenExpectedRemoteBranchMissing(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: "impl ok"},
+	})
+	eng.Cfg.Concurrency = 1
+	var progress bytes.Buffer
+	eng.Progress = &progress
+
+	origIsGitRepo := isGitRepo
+	origVerifyRemoteBranch := verifyRemoteBranch
+	t.Cleanup(func() {
+		isGitRepo = origIsGitRepo
+		verifyRemoteBranch = origVerifyRemoteBranch
+	})
+	isGitRepo = func(string) bool { return true }
+	verifyRemoteBranch = func(string, string) (bool, error) { return false, nil }
+
+	p := &Pipeline{ID: "impl-only", Stages: []Stage{{ID: "implement"}}}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["implement"].Status != store.StageStatusFailed {
+		t.Fatalf("implement status=%q want failed", sm["implement"].Status)
+	}
+	if sm["implement"].Summary == nil {
+		t.Fatal("implement summary is nil")
+	}
+	want := "expected branch shuttle/issue-42 not found on remote origin; agent must push to this branch"
+	if *sm["implement"].Summary != want {
+		t.Fatalf("implement summary=%q want %q", *sm["implement"].Summary, want)
+	}
+}
+
+func TestImplementSucceedsWithWarningWhenRemoteBranchCheckErrors(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: "impl ok"},
+	})
+	eng.Cfg.Concurrency = 1
+	var progress bytes.Buffer
+	eng.Progress = &progress
+
+	origIsGitRepo := isGitRepo
+	origVerifyRemoteBranch := verifyRemoteBranch
+	t.Cleanup(func() {
+		isGitRepo = origIsGitRepo
+		verifyRemoteBranch = origVerifyRemoteBranch
+	})
+	isGitRepo = func(string) bool { return true }
+	verifyRemoteBranch = func(string, string) (bool, error) {
+		return false, fmt.Errorf("auth required")
+	}
+
+	p := &Pipeline{ID: "impl-only", Stages: []Stage{{ID: "implement"}}}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("run status=%q want succeeded", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["implement"].Status != store.StageStatusSucceeded {
+		t.Fatalf("implement status=%q want succeeded", sm["implement"].Status)
+	}
+
+	out := progress.String()
+	if !strings.Contains(out, "could not verify remote branch shuttle/issue-42: auth required") {
+		t.Fatalf("progress output missing advisory warning, got %q", out)
+	}
+}
+
+func TestImplementSucceedsWhenExpectedRemoteBranchPresent(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: "impl ok"},
+	})
+	eng.Cfg.Concurrency = 1
+
+	origIsGitRepo := isGitRepo
+	origVerifyRemoteBranch := verifyRemoteBranch
+	t.Cleanup(func() {
+		isGitRepo = origIsGitRepo
+		verifyRemoteBranch = origVerifyRemoteBranch
+	})
+	isGitRepo = func(string) bool { return true }
+	verifyRemoteBranch = func(string, string) (bool, error) { return true, nil }
+
+	p := &Pipeline{ID: "impl-only", Stages: []Stage{{ID: "implement"}}}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("run status=%q want succeeded", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["implement"].Status != store.StageStatusSucceeded {
+		t.Fatalf("implement status=%q want succeeded", sm["implement"].Status)
 	}
 }

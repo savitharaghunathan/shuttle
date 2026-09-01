@@ -433,6 +433,31 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 				return true, nil
 			}
 		} else {
+			if sid == "implement" && isGitRepo(run.CWD) {
+				found, verifyErr := verifyRemoteBranch(run.CWD, branch)
+				switch {
+				case verifyErr != nil:
+					e.progressf("! could not verify remote branch %s: %v\n", branch, verifyErr)
+				case !found:
+					sr.Status = store.StageStatusFailed
+					msg := fmt.Sprintf("expected branch %s not found on remote origin; agent must push to this branch", branch)
+					sr.Summary = &msg
+					logPath := filepath.Join(run.RunDir, "logs", sid+".log")
+					sr.LogPath = &logPath
+					e.progressf("✗ stage %s failed\n", sid)
+					if err := e.Store.UpdateStage(sr); err != nil {
+						return false, err
+					}
+					if err := e.skipRemaining(runID); err != nil {
+						return false, err
+					}
+					if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+						return false, err
+					}
+					return true, nil
+				}
+			}
+
 			sr.Status = store.StageStatusSucceeded
 			sr.Summary = &result.Summary
 			logPath := filepath.Join(run.RunDir, "logs", sid+".log")
