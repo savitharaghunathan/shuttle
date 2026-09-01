@@ -9,10 +9,13 @@ import (
 
 func TestRenderSubstitutes(t *testing.T) {
 	ctx := pipeline.RenderContext{
-		RunID:   "run-1",
-		StageID: "implement",
-		Cwd:     "/project",
-		RunDir:  "/project/.shuttle/runs/run-1",
+		RunID:      "run-1",
+		StageID:    "implement",
+		Cwd:        "/project",
+		RunDir:     "/project/.shuttle/runs/run-1",
+		IssueRef:   "org/repo#42",
+		Branch:     "shuttle/issue-42",
+		ShuttleBin: "/usr/local/bin/shuttle",
 		Artifacts: map[string]string{
 			"spec": "/project/.shuttle/runs/run-1/artifacts/spec",
 		},
@@ -24,11 +27,11 @@ func TestRenderSubstitutes(t *testing.T) {
 		},
 	}
 
-	got, err := pipeline.Render("spec={{.Artifacts.spec}} cwd={{.Cwd}} env={{.Env.FOO}}", ctx)
+	got, err := pipeline.Render("spec={{.Artifacts.spec}} cwd={{.Cwd}} issue={{.IssueRef}} branch={{.Branch}} bin={{.ShuttleBin}} env={{.Env.FOO}}", ctx)
 	if err != nil {
 		t.Fatalf("Render() = %v", err)
 	}
-	want := "spec=/project/.shuttle/runs/run-1/artifacts/spec cwd=/project env=bar"
+	want := "spec=/project/.shuttle/runs/run-1/artifacts/spec cwd=/project issue=org/repo#42 branch=shuttle/issue-42 bin=/usr/local/bin/shuttle env=bar"
 	if got != want {
 		t.Fatalf("Render() = %q, want %q", got, want)
 	}

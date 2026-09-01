@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/savitharaghunathan/shuttle/internal/artifact"
 	"github.com/savitharaghunathan/shuttle/internal/config"
+	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
 )
@@ -49,6 +50,7 @@ type Engine struct {
 	specPaths map[string]string
 	runOpts   map[string]runOptions
 	cancels   map[string]context.CancelFunc
+	startWarn map[string][]string
 }
 
 type runOptions struct {
@@ -66,6 +68,7 @@ func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine
 		specPaths:    make(map[string]string),
 		runOpts:      make(map[string]runOptions),
 		cancels:      make(map[string]context.CancelFunc),
+		startWarn:    make(map[string][]string),
 	}
 }
 
@@ -148,6 +151,11 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		}
 	}
 
+	startWarnings, err := e.concurrentIssueWarnings(p.IssueRef)
+	if err != nil {
+		return "", err
+	}
+
 	if err := e.Store.CreateRun(store.Run{
 		ID:          runID,
 		TemplateID:  p.TemplateID,
@@ -202,9 +210,52 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		e.specPaths[runID] = p.SpecPath
 	}
 	e.runOpts[runID] = runOptions{Agent: resolvedAgent, Model: p.Model}
+	if len(startWarnings) > 0 {
+		e.startWarn[runID] = append([]string(nil), startWarnings...)
+	}
 	e.mu.Unlock()
 
 	return runID, nil
+}
+
+func (e *Engine) StartWarnings(runID string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	warns := e.startWarn[runID]
+	return append([]string(nil), warns...)
+}
+
+func (e *Engine) concurrentIssueWarnings(issueRef string) ([]string, error) {
+	if strings.TrimSpace(issueRef) == "" {
+		return nil, nil
+	}
+	runs, err := e.Store.ListRuns(store.ListRunsOpts{
+		Limit:    100,
+		IssueRef: issueRef,
+		Statuses: []store.RunStatus{
+			store.RunStatusPending,
+			store.RunStatusRunning,
+			store.RunStatusBlocked,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list active issue runs: %w", err)
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	branch, err := issue.BranchName(issueRef, "")
+	if err != nil {
+		return nil, nil
+	}
+	return []string{
+		fmt.Sprintf(
+			"another run for %s is already active (%s); concurrent work may conflict on branch %s",
+			issueRef,
+			runs[0].ID,
+			branch,
+		),
+	}, nil
 }
 
 func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
@@ -273,14 +324,45 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		}
 
 		// Render stage templates before execution
+		branch, resolveErr := issue.ResolveBranch(
+			run.IssueRef,
+			run.ID,
+			run.ParentRunID,
+			func(id string) (string, string, string, error) {
+				parent, err := e.Store.GetRun(id)
+				if err != nil {
+					return "", "", "", err
+				}
+				return parent.IssueRef, parent.ID, parent.ParentRunID, nil
+			},
+		)
+		if resolveErr != nil {
+			sr.Status = store.StageStatusFailed
+			msg := fmt.Sprintf("resolve branch: %v", resolveErr)
+			sr.Summary = &msg
+			if err := e.Store.UpdateStage(sr); err != nil {
+				return false, err
+			}
+			if err := e.skipRemaining(runID); err != nil {
+				return false, err
+			}
+			if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
 		rctx := RenderContext{
-			RunID:     runID,
-			StageID:   sid,
-			Cwd:       run.CWD,
-			RunDir:    run.RunDir,
-			Artifacts: collectDir(filepath.Join(run.RunDir, "artifacts")),
-			Inputs:    collectDir(filepath.Join(run.RunDir, "inputs")),
-			Env:       envMap(),
+			RunID:      runID,
+			StageID:    sid,
+			Cwd:        run.CWD,
+			RunDir:     run.RunDir,
+			IssueRef:   run.IssueRef,
+			Branch:     branch,
+			ShuttleBin: ShuttleBin(),
+			Artifacts:  collectDir(filepath.Join(run.RunDir, "artifacts")),
+			Inputs:     collectDir(filepath.Join(run.RunDir, "inputs")),
+			Env:        envMap(),
 		}
 		var renderedPrompt string
 		var renderedCmd []string
@@ -401,6 +483,31 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 				return true, nil
 			}
 		} else {
+			if sid == "implement" && isGitRepo(run.CWD) {
+				found, verifyErr := verifyRemoteBranch(run.CWD, branch)
+				switch {
+				case verifyErr != nil:
+					e.progressf("! could not verify remote branch %s: %v\n", branch, verifyErr)
+				case !found:
+					sr.Status = store.StageStatusFailed
+					msg := fmt.Sprintf("expected branch %s not found on remote origin; agent must push to this branch", branch)
+					sr.Summary = &msg
+					logPath := filepath.Join(run.RunDir, "logs", sid+".log")
+					sr.LogPath = &logPath
+					e.progressf("✗ stage %s failed\n", sid)
+					if err := e.Store.UpdateStage(sr); err != nil {
+						return false, err
+					}
+					if err := e.skipRemaining(runID); err != nil {
+						return false, err
+					}
+					if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+						return false, err
+					}
+					return true, nil
+				}
+			}
+
 			sr.Status = store.StageStatusSucceeded
 			sr.Summary = &result.Summary
 			logPath := filepath.Join(run.RunDir, "logs", sid+".log")

@@ -96,7 +96,11 @@ func applyDefaults(raw *fileConfig) *Config {
 		cfg.Test.Command = []string{"go", "test", "./..."}
 	}
 	if len(cfg.OpenPR.Command) == 0 {
-		cfg.OpenPR.Command = []string{"echo", "open_pr skipped: configure open_pr.command (e.g. gh pr create --fill)"}
+		cfg.OpenPR.Command = []string{
+			"{{.ShuttleBin}}", "pr", "open",
+			"--branch", "{{.Branch}}",
+			"--issue", "{{.IssueRef}}",
+		}
 	}
 	if len(cfg.Ship.Command) == 0 {
 		cfg.Ship.Command = []string{"echo", "ship skipped: configure ship.command"}

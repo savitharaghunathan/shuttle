@@ -8,10 +8,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 )
 
 var builtinWorkers = map[string]bool{"manual": true, "shell": true, "intake": true}
+var gitPreflight = GitPreflight
 
 func (e *Engine) validateTemplate(runID string, pl *Pipeline, stages []store.StageRun) error {
 	inTemplate := map[string]bool{}
@@ -285,7 +287,22 @@ func (e *Engine) RetryRun(ctx context.Context, runID string, p RetryParams) (Ret
 		}
 	}
 
-	warnings := GitPreflight(parent.CWD)
+	branch, err := issue.ResolveBranch(
+		parent.IssueRef,
+		parent.ID,
+		parent.ParentRunID,
+		func(id string) (string, string, string, error) {
+			pr, err := e.Store.GetRun(id)
+			if err != nil {
+				return "", "", "", err
+			}
+			return pr.IssueRef, pr.ID, pr.ParentRunID, nil
+		},
+	)
+	if err != nil {
+		return RetryResult{}, fmt.Errorf("resolve branch: %w", err)
+	}
+	warnings := gitPreflight(parent.CWD, branch)
 
 	newID, err := e.StartRun(ctx, StartParams{
 		TemplateID:  parent.TemplateID,

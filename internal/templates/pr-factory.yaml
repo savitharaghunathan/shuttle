@@ -6,7 +6,11 @@ stages:
   - id: implement
     depends_on: [intake]
     prompt: |
-      Implement the requested change from the intake artifacts and summarize the result.
+      Implement the requested change from the intake artifacts.
+      You MUST use branch {{.Branch}} exactly.
+      Create it from the default branch if needed, commit your changes, and push to origin.
+      If the branch already exists locally or on the remote, continue on it and push updates.
+      Summarize the result.
     outputs: [summary]
   - id: test
     worker: shell

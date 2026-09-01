@@ -21,6 +21,9 @@ func TestGetPrFactoryHeadlessTemplate(t *testing.T) {
 	if got := stageIDs(p); strings.Join(got, ",") != strings.Join(wantIDs, ",") {
 		t.Fatalf("stage ids = %v, want %v", got, wantIDs)
 	}
+	if !strings.Contains(p.Stages[1].Prompt, "You MUST use branch {{.Branch}} exactly.") {
+		t.Fatalf("implement prompt missing required branch instruction: %q", p.Stages[1].Prompt)
+	}
 	for _, stage := range p.Stages {
 		if stage.Worker == "manual" {
 			t.Fatalf("headless pipeline must not contain manual stage %q", stage.ID)

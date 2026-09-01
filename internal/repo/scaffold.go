@@ -45,7 +45,9 @@ func WriteShuttleYAMLIfAbsent(repoPath string, testCmd []string) error {
 		DefaultTimeout: "30m",
 		Test:           scaffoldStage{Command: testCmd},
 		OpenPR: scaffoldStage{Command: []string{
-			"gh", "pr", "create", "--fill",
+			"{{.ShuttleBin}}", "pr", "open",
+			"--branch", "{{.Branch}}",
+			"--issue", "{{.IssueRef}}",
 		}},
 		Ship: scaffoldStage{Command: []string{"echo", "ship skipped"}},
 		Workers: map[string]scaffoldWorker{

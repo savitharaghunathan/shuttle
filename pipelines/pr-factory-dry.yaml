@@ -17,3 +17,4 @@ stages:
   - id: open_pr
     worker: shell
     depends_on: [approve_pr]
+    command: ["true"]
