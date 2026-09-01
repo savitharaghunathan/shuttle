@@ -112,7 +112,7 @@ work_root: .shuttle
 test:
   command: ["go", "test", "./..."]
 open_pr:
-  command: ["gh", "pr", "create", "--fill"]
+  command: ["{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"]
 workers:
   cursor:
     bin: cursor-agent
@@ -126,6 +126,46 @@ workers:
 `--agent` and `--model` on `shuttle run` override the default worker and are passed into preset arg templates (`{{.Prompt}}`, `{{.Model}}`). If `--model` is unset, empty template args are dropped so the CLI is not passed blank flags.
 
 Built-in agent presets: `claude`, `codex`, `opencode`, `cursor`. Add any other agent under `workers:` in `shuttle.yaml` and use `--agent <name>` — no code change required. List registered workers with `shuttle workers`. Also: `intake`, `shell`, `exec`, `manual`.
+
+## Branch and PR lifecycle
+
+Shuttle now keeps branch/PR behavior stable across retries and re-runs.
+
+| Run type | Branch |
+|----------|--------|
+| `run --issue` | `shuttle/issue-<N>` |
+| `run --spec` (new run) | `shuttle/run-<run-id-prefix>` |
+| `retry` of a spec run | Reuses the original root run branch via `parent_run_id` |
+
+- `implement` prompts require using `{{.Branch}}` exactly.
+- After `implement`, Shuttle verifies `refs/heads/{{.Branch}}` exists on the remote.
+- If remote verification is inconclusive (auth/network), Shuttle warns and continues.
+- If remote verification succeeds and the branch is missing, `implement` fails compliance.
+- Default `open_pr` runs `shuttle pr open`, which is idempotent:
+  - existing open PR on the branch: prints `pr: <url>` and exits 0
+  - no open PR: creates one
+  - `gh pr list` failure: stage fails instead of silently creating
+
+### `SHUTTLE_BIN` and wrappers
+
+`{{.ShuttleBin}}` resolves to:
+
+1. `SHUTTLE_BIN` if set
+2. current executable path
+3. fallback `shuttle` on `PATH`
+
+Set `SHUTTLE_BIN` when using a wrapper script or non-standard install location.
+
+### Migration for existing repos
+
+`shuttle import repo` scaffolds new configs with the idempotent `open_pr` command, but existing repos keep their current `shuttle.yaml`. Update old configs manually:
+
+```yaml
+open_pr:
+  command: ["{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"]
+```
+
+You can still override `open_pr.command` with any custom workflow.
 
 ## Pipelines
 
@@ -194,6 +234,10 @@ shuttle retry <run-id> --force          # retry a succeeded run (sharp edge)
 - Resume is for terminal `failed`/`cancelled` only; use `approve`/`reject` for `blocked`.
 - **Do not edit pipeline YAML for in-flight runs** — template drift blocks resume.
 - Retry uses a **frozen spec** (`inputs/spec.md`); it does not re-fetch the issue — use `run --issue` for that.
-- Retry does **not** clean git; inspect `git status` / open PRs first. Warnings are advisory.
+- Retry does **not** clean git; inspect `git status` / open PRs first.
+- Retry runs extended git preflight warnings (advisory): dirty tree, non-default branch, local branch already exists, open PR already exists.
+- Resume skips retry preflight checks and continues the same run state.
+- Retrying a succeeded run with `--force` can update the existing PR on that branch (it does not open a second PR).
+- See `Branch and PR lifecycle` for branch naming, idempotent PR-open behavior, and migration.
 - API resume/retry POSTs **block** for the full run; prefer the CLI for long recovery runs, or set a 30+ min client timeout.
 - Stale logs/artifacts for reset stages are archived under `<run-dir>/.recovery/` (not deleted; not auto-pruned).

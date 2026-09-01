@@ -26,12 +26,12 @@ Dry-run pipelines, per-stage logs, `approve`/`reject` gates, and embedded templa
 ### Runs view + recovery
 List and compare runs (agent, status, time, issue, stage) via `shuttle runs list` and `GET /v1/runs`. Resume failed/cancelled runs from the earliest failed stage; retry any terminal run against its frozen spec with optional agent/model overrides. Run metadata persists across sessions.
 
+### Smarter PR lifecycle
+Handle real-world git state — existing branch, open PR for the issue, and idempotent `open_pr` behavior that updates the same PR branch instead of failing on retries.
+
 ---
 
 ## Next
-
-### Smarter PR lifecycle
-**Goal:** Handle real-world git state — existing branch, open PR for the issue, push updates instead of failing at `open_pr`.
 
 ### Zero-touch repo discovery
 **Goal:** `run --issue` can resolve and register a repo the first time, without a separate import step.
