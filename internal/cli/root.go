@@ -22,7 +22,9 @@ import (
 )
 
 func Execute() error {
-	return NewRootCommand(os.Stdout, os.Stderr).Execute()
+	cmd := NewRootCommand(os.Stdout, os.Stderr)
+	cmd.SetArgs(filterEmptyFlags(os.Args[1:]))
+	return cmd.Execute()
 }
 
 func NewRootCommand(out, errOut io.Writer) *cobra.Command {
@@ -38,6 +40,7 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(
 		newRunCommand(out),
 		newImportCommand(out),
+		newPRCommand(out, errOut),
 		newReposCommand(out),
 		newRunsCommand(out),
 		newResumeCommand(out),
