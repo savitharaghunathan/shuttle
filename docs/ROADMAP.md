@@ -27,7 +27,7 @@ Dry-run pipelines, per-stage logs, `approve`/`reject` gates, and embedded templa
 List and compare runs (agent, status, time, issue, stage) via `shuttle runs list` and `GET /v1/runs`. Resume failed/cancelled runs from the earliest failed stage; retry any terminal run against its frozen spec with optional agent/model overrides. Run metadata persists across sessions.
 
 ### Smarter PR lifecycle
-Handle real-world git state — existing branch, open PR for the issue, and idempotent `open_pr` behavior that updates the same PR branch instead of failing on retries.
+Deterministic feature branches per run (`shuttle/issue-N` for issues, `shuttle/run-<id>` for specs; spec retries inherit via `parent_run_id`). `implement` prompts pin the branch; post-implement compliance checks the remote ref. Idempotent `shuttle pr open` reuses an existing PR instead of failing on retry. Extended retry preflight warns on dirty tree, leftover branch, and open PR.
 
 ---
 
