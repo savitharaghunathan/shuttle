@@ -25,6 +25,9 @@ func TestGetPrFactoryTemplate(t *testing.T) {
 	if implement.Worker != "" {
 		t.Fatalf("implement worker = %q, want empty for default worker injection", implement.Worker)
 	}
+	if !strings.Contains(implement.Prompt, "You MUST use branch {{.Branch}} exactly.") {
+		t.Fatalf("implement prompt missing required branch instruction: %q", implement.Prompt)
+	}
 	if !contains(implement.Outputs, "summary") {
 		t.Fatalf("implement outputs = %v, want summary", implement.Outputs)
 	}
