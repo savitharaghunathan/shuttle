@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -559,6 +560,20 @@ func (w *captureWorker) Execute(_ context.Context, req worker.Request) (worker.R
 	return w.result, nil
 }
 
+type captureByStageWorker struct {
+	result worker.Result
+	reqs   map[string]worker.Request
+}
+
+func (w *captureByStageWorker) Name() string { return "capture-by-stage" }
+func (w *captureByStageWorker) Execute(_ context.Context, req worker.Request) (worker.Result, error) {
+	if w.reqs == nil {
+		w.reqs = make(map[string]worker.Request)
+	}
+	w.reqs[req.StageID] = req
+	return w.result, nil
+}
+
 func TestRenderPromptWithArtifact(t *testing.T) {
 	cw := &captureWorker{
 		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
@@ -621,6 +636,79 @@ func TestRenderPromptWithArtifact(t *testing.T) {
 	}
 }
 
+func TestRenderIncludesBranchAndShuttleBinForIssueRun(t *testing.T) {
+	cw := &captureByStageWorker{
+		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
+	}
+
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("capture", cw)
+
+	cfg := &config.Config{
+		WorkRoot:    filepath.Join(dir, ".shuttle"),
+		Concurrency: 2,
+	}
+	eng := NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+
+	p := &Pipeline{
+		ID: "render-bin-branch",
+		Stages: []Stage{
+			{ID: "implement", Worker: "capture", Prompt: "use {{.Branch}}"},
+			{
+				ID:        "open_pr",
+				Worker:    "capture",
+				DependsOn: []string{"implement"},
+				Command:   []string{"{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	implReq, ok := cw.reqs["implement"]
+	if !ok {
+		t.Fatal("implement stage was not executed")
+	}
+	if implReq.Prompt != "use shuttle/issue-42" {
+		t.Fatalf("implement prompt = %q, want %q", implReq.Prompt, "use shuttle/issue-42")
+	}
+
+	openReq, ok := cw.reqs["open_pr"]
+	if !ok {
+		t.Fatal("open_pr stage was not executed")
+	}
+	if len(openReq.Command) == 0 {
+		t.Fatal("open_pr command is empty")
+	}
+	if !filepath.IsAbs(openReq.Command[0]) {
+		t.Fatalf("open_pr command[0] = %q, want absolute path", openReq.Command[0])
+	}
+	if got := openReq.Command[4]; got != "shuttle/issue-42" {
+		t.Fatalf("open_pr branch arg = %q, want shuttle/issue-42", got)
+	}
+}
+
 func TestRenderMissingArtifactFailsStage(t *testing.T) {
 	cw := &captureWorker{
 		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
@@ -676,6 +764,64 @@ func TestRenderMissingArtifactFailsStage(t *testing.T) {
 	}
 	if sm["impl"].Summary == nil || *sm["impl"].Summary == "" {
 		t.Fatal("impl summary should describe render error")
+	}
+}
+
+func TestMalformedIssueRefFailsStageAtRender(t *testing.T) {
+	cw := &captureWorker{
+		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
+	}
+
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("capture", cw)
+
+	cfg := &config.Config{
+		WorkRoot:    filepath.Join(dir, ".shuttle"),
+		Concurrency: 2,
+	}
+
+	eng := NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+
+	p := &Pipeline{
+		ID: "bad-issue-ref",
+		Stages: []Stage{
+			{ID: "implement", Worker: "capture", Prompt: "Read {{.Branch}}"},
+		},
+	}
+
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "tmpl",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "badformat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, _ := eng.Store.GetRun(runID)
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["implement"].Status != store.StageStatusFailed {
+		t.Fatalf("implement status=%q want failed", sm["implement"].Status)
+	}
+	if sm["implement"].Summary == nil || !strings.Contains(*sm["implement"].Summary, "resolve branch") {
+		t.Fatalf("implement summary=%v, want resolve branch error", sm["implement"].Summary)
 	}
 }
 

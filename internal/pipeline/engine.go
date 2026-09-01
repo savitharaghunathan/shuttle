@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/savitharaghunathan/shuttle/internal/artifact"
 	"github.com/savitharaghunathan/shuttle/internal/config"
+	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
 )
@@ -273,14 +274,45 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		}
 
 		// Render stage templates before execution
+		branch, resolveErr := issue.ResolveBranch(
+			run.IssueRef,
+			run.ID,
+			run.ParentRunID,
+			func(id string) (string, string, string, error) {
+				parent, err := e.Store.GetRun(id)
+				if err != nil {
+					return "", "", "", err
+				}
+				return parent.IssueRef, parent.ID, parent.ParentRunID, nil
+			},
+		)
+		if resolveErr != nil {
+			sr.Status = store.StageStatusFailed
+			msg := fmt.Sprintf("resolve branch: %v", resolveErr)
+			sr.Summary = &msg
+			if err := e.Store.UpdateStage(sr); err != nil {
+				return false, err
+			}
+			if err := e.skipRemaining(runID); err != nil {
+				return false, err
+			}
+			if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
 		rctx := RenderContext{
-			RunID:     runID,
-			StageID:   sid,
-			Cwd:       run.CWD,
-			RunDir:    run.RunDir,
-			Artifacts: collectDir(filepath.Join(run.RunDir, "artifacts")),
-			Inputs:    collectDir(filepath.Join(run.RunDir, "inputs")),
-			Env:       envMap(),
+			RunID:      runID,
+			StageID:    sid,
+			Cwd:        run.CWD,
+			RunDir:     run.RunDir,
+			IssueRef:   run.IssueRef,
+			Branch:     branch,
+			ShuttleBin: ShuttleBin(),
+			Artifacts:  collectDir(filepath.Join(run.RunDir, "artifacts")),
+			Inputs:     collectDir(filepath.Join(run.RunDir, "inputs")),
+			Env:        envMap(),
 		}
 		var renderedPrompt string
 		var renderedCmd []string
