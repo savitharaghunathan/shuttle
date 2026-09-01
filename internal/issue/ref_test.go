@@ -60,4 +60,3 @@ func TestResolveBranchMalformedIssue(t *testing.T) {
 		t.Fatalf("expected error for malformed issue ref")
 	}
 }
-

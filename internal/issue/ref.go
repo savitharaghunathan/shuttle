@@ -99,4 +99,3 @@ func ResolveBranch(issueRef, runID, parentRunID string, loadParent func(id strin
 	}
 	return "", fmt.Errorf("could not resolve branch")
 }
-
