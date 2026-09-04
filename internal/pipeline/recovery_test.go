@@ -278,6 +278,82 @@ func TestRetryFromFailedSetsParent(t *testing.T) {
 	}
 }
 
+func TestRetrySDLCDiscardsParentArtifacts(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: "ok"},
+	})
+	p := &Pipeline{ID: "sdlc", Stages: []Stage{{ID: "implement", Worker: "fake"}}}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	ctx := context.Background()
+
+	parent, err := eng.StartRun(ctx, StartParams{
+		TemplateID:  "sdlc",
+		Pipeline:    p,
+		CWD:         dir,
+		SpecContent: "ship the task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.Store.UpdateRunStatus(parent, store.RunStatusFailed); err != nil {
+		t.Fatal(err)
+	}
+	parentRun, err := eng.Store.GetRun(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(parentRun.RunDir, "artifacts", "plan", "summary"), "parent-only plan")
+
+	res, err := eng.RetryRun(ctx, parent, RetryParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := eng.Store.GetRun(res.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childPlan := filepath.Join(child.RunDir, "artifacts", "plan", "summary")
+	if _, err := os.Stat(childPlan); !os.IsNotExist(err) {
+		t.Fatalf("child retry copied parent plan artifact: stat err=%v", err)
+	}
+}
+
+func TestRetrySDLCHintWarning(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: "ok"},
+	})
+	p := &Pipeline{ID: "sdlc", Stages: []Stage{{ID: "implement", Worker: "fake"}}}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	ctx := context.Background()
+
+	parent, err := eng.StartRun(ctx, StartParams{
+		TemplateID:  "sdlc-headless",
+		Pipeline:    p,
+		CWD:         dir,
+		SpecContent: "ship the task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.Store.UpdateRunStatus(parent, store.RunStatusFailed); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := eng.RetryRun(ctx, parent, RetryParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsWarning(res.Warnings, "retry starts a new run; plan/design artifacts are not copied from the parent run") {
+		t.Fatalf("warnings=%v, want SDLC retry artifact hint", res.Warnings)
+	}
+}
+
 func TestRetryFromSucceededRequiresForce(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{"impl": {Status: worker.StatusSucceeded, Summary: "ok"}})
 	p := &Pipeline{ID: "t", Stages: []Stage{{ID: "impl", Worker: "fake"}}}
@@ -295,6 +371,117 @@ func TestRetryFromSucceededRequiresForce(t *testing.T) {
 	}
 	if res.RunID == parent {
 		t.Fatal("retry must create a new run id")
+	}
+}
+
+func TestResumeFromImplementPreservesDesignArtifact(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.Concurrency = 1
+	scripted := &scriptedWorker{
+		seq: map[string][]worker.Result{
+			"plan":      {{Status: worker.StatusSucceeded, Summary: "plan ok"}},
+			"design":    {{Status: worker.StatusSucceeded, Summary: "design ok", Outputs: map[string]string{"summary": "design artifact"}}},
+			"implement": {{Status: worker.StatusFailed, Summary: "boom"}, {Status: worker.StatusSucceeded, Summary: "implemented", Outputs: map[string]string{"summary": "implementation artifact"}}},
+		},
+		calls: map[string]int{},
+	}
+	eng.Registry.Register("scripted", scripted)
+
+	p := &Pipeline{
+		ID: "sdlc",
+		Stages: []Stage{
+			{ID: "plan", Worker: "scripted", Outputs: []string{"summary"}},
+			{ID: "design", Worker: "scripted", DependsOn: []string{"plan"}, Outputs: []string{"summary"}},
+			{ID: "implement", Worker: "scripted", DependsOn: []string{"design"}, Outputs: []string{"summary"}},
+		},
+	}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return p, nil }
+	ctx := context.Background()
+
+	runID, err := eng.StartRun(ctx, StartParams{TemplateID: "sdlc", Pipeline: p, CWD: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("precondition run=%s want failed", run.Status)
+	}
+	designPath := filepath.Join(run.RunDir, "artifacts", "design", "summary")
+	before, err := os.ReadFile(designPath)
+	if err != nil {
+		t.Fatalf("read design artifact before resume: %v", err)
+	}
+
+	if err := eng.ResumeRun(ctx, runID); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	after, err := os.ReadFile(designPath)
+	if err != nil {
+		t.Fatalf("read design artifact after resume: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("design artifact changed: before %q after %q", before, after)
+	}
+	run, err = eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("after resume run=%s want succeeded", run.Status)
+	}
+}
+
+func TestResumeUsesPersistedPlanWorker(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.Concurrency = 1
+	scripted := &scriptedWorker{
+		seq: map[string][]worker.Result{
+			"plan": {{Status: worker.StatusFailed, Summary: "boom"}, {Status: worker.StatusSucceeded, Summary: "plan ok"}},
+		},
+		calls: map[string]int{},
+	}
+	eng.Registry.Register("persisted", scripted)
+
+	initial := &Pipeline{ID: "sdlc", Stages: []Stage{{ID: "plan", Worker: "persisted", Outputs: []string{"summary"}}}}
+	eng.TemplateLoader = func(id string) (*Pipeline, error) { return initial, nil }
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{TemplateID: "sdlc", Pipeline: initial, CWD: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("precondition run=%s want failed", run.Status)
+	}
+
+	reloaded := &Pipeline{ID: "sdlc", Stages: []Stage{{ID: "plan", Worker: "template-only", Outputs: []string{"summary"}}}}
+	eng2 := NewEngine(eng.Store, eng.Registry, eng.Cfg)
+	eng2.RetryBackoff = 0
+	eng2.TemplateLoader = func(id string) (*Pipeline, error) { return reloaded, nil }
+	if err := eng2.ResumeRun(ctx, runID); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	run, err = eng2.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("after resume run=%s want succeeded", run.Status)
+	}
+	if scripted.calls["plan"] != 2 {
+		t.Fatalf("persisted plan worker calls=%d want 2", scripted.calls["plan"])
 	}
 }
 
