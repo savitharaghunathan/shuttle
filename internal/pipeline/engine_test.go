@@ -896,6 +896,70 @@ func TestPersistedAgentRestoredOnFreshEngine(t *testing.T) {
 	}
 }
 
+func TestAgentOverrideSkipsReadOnlyStages(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.DefaultWorker = "cursor"
+	eng.Cfg.ReadOnlyWorker = "claude"
+
+	p := &Pipeline{
+		ID: "readonly-defaults",
+		Stages: []Stage{
+			{ID: "plan", ReadOnly: true},
+			{ID: "implement", DependsOn: []string{"plan"}},
+		},
+	}
+
+	runID, err := eng.StartRun(context.Background(), StartParams{
+		TemplateID: "readonly-defaults",
+		Pipeline:   p,
+		CWD:        dir,
+		Agent:      "cursor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["plan"].Worker != "claude" {
+		t.Fatalf("plan worker=%q want claude", sm["plan"].Worker)
+	}
+	if sm["implement"].Worker != "cursor" {
+		t.Fatalf("implement worker=%q want cursor", sm["implement"].Worker)
+	}
+}
+
+func TestExplicitWorkerNotOverridden(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.DefaultWorker = "cursor"
+	eng.Cfg.ReadOnlyWorker = "claude"
+
+	p := &Pipeline{
+		ID: "explicit-worker",
+		Stages: []Stage{
+			{ID: "plan", Worker: "codex", ReadOnly: true},
+			{ID: "implement", DependsOn: []string{"plan"}},
+		},
+	}
+
+	runID, err := eng.StartRun(context.Background(), StartParams{
+		TemplateID: "explicit-worker",
+		Pipeline:   p,
+		CWD:        dir,
+		Agent:      "cursor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["plan"].Worker != "codex" {
+		t.Fatalf("plan worker=%q want codex", sm["plan"].Worker)
+	}
+	if sm["implement"].Worker != "cursor" {
+		t.Fatalf("implement worker=%q want cursor", sm["implement"].Worker)
+	}
+}
+
 func TestImplementFailsWhenExpectedRemoteBranchMissing(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{
 		"implement": {Status: worker.StatusSucceeded, Summary: "impl ok"},

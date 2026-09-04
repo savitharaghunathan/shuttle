@@ -9,6 +9,7 @@ type Pipeline struct {
 type Stage struct {
 	ID        string   `yaml:"id"`
 	Worker    string   `yaml:"worker"`
+	ReadOnly  bool     `yaml:"readonly,omitempty"`
 	DependsOn []string `yaml:"depends_on"`
 	Prompt    string   `yaml:"prompt"`
 	Command   []string `yaml:"command"`

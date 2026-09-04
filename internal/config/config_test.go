@@ -49,3 +49,17 @@ func TestLoadDefaultsOpenPRCommand(t *testing.T) {
 		t.Fatalf("OpenPR.Command=%v want %v", cfg.OpenPR.Command, wantOpenPR)
 	}
 }
+
+func TestEffectiveReadOnlyWorkerDefaultsToClaude(t *testing.T) {
+	cfg := &config.Config{}
+	if got := cfg.EffectiveReadOnlyWorker(); got != "claude" {
+		t.Fatalf("EffectiveReadOnlyWorker()=%q want claude", got)
+	}
+}
+
+func TestEffectiveReadOnlyWorkerUsesConfiguredValue(t *testing.T) {
+	cfg := &config.Config{ReadOnlyWorker: "codex"}
+	if got := cfg.EffectiveReadOnlyWorker(); got != "codex" {
+		t.Fatalf("EffectiveReadOnlyWorker()=%q want codex", got)
+	}
+}

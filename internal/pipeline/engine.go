@@ -689,7 +689,11 @@ func (e *Engine) applyDefaults(p *Pipeline, agentOverride string) *Pipeline {
 
 	for i := range pl.Stages {
 		if pl.Stages[i].Worker == "" {
-			pl.Stages[i].Worker = defaultWorker
+			if pl.Stages[i].ReadOnly {
+				pl.Stages[i].Worker = e.Cfg.EffectiveReadOnlyWorker()
+			} else {
+				pl.Stages[i].Worker = defaultWorker
+			}
 		}
 		if len(pl.Stages[i].Command) == 0 {
 			switch pl.Stages[i].ID {
