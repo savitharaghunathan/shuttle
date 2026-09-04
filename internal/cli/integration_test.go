@@ -13,6 +13,7 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
+	"github.com/savitharaghunathan/shuttle/internal/registry"
 )
 
 func TestRunAndStatusEmbeddedTemplate(t *testing.T) {
@@ -115,6 +116,370 @@ func TestE2EDryPRFactory(t *testing.T) {
 	}
 	if !strings.Contains(approveOutput, "stage: open_pr\tstatus: succeeded") {
 		t.Fatalf("approve output %q missing succeeded open_pr", approveOutput)
+	}
+}
+
+func TestE2EDrySDLC(t *testing.T) {
+	root := moduleRoot(t)
+	pipelinePath := filepath.Join(root, "pipelines", "sdlc-dry.yaml")
+
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "dry sdlc\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", pipelinePath, "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: blocked") {
+		t.Fatalf("run output %q missing blocked status", runOutput)
+	}
+	for _, want := range []string{
+		"stage: plan\tstatus: succeeded",
+		"stage: design\tstatus: succeeded",
+		"stage: implement\tstatus: succeeded",
+		"stage: test\tstatus: succeeded",
+		"stage: review\tstatus: succeeded",
+		"stage: approve_ship\tstatus: waiting_approval",
+		"stage: ship\tstatus: pending",
+		"shuttle approve",
+	} {
+		if !strings.Contains(runOutput, want) {
+			t.Fatalf("run output %q missing %q", runOutput, want)
+		}
+	}
+
+	runID := parseRunID(t, runOutput)
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "plan", "summary"), "dry plan summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "design", "summary"), "dry design summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "implement", "summary"), "dry implementation summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "review", "summary"), "dry review summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("logs", "test.log"), "dry tests passed\n")
+
+	out.Reset()
+	approveCmd := NewRootCommand(&out, &errOut)
+	approveCmd.SetArgs([]string{"approve", runID, "approve_ship", "--message", "dry approved"})
+	if err := approveCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	approveOutput := out.String()
+	if !strings.Contains(approveOutput, "status: succeeded") {
+		t.Fatalf("approve output %q missing succeeded status", approveOutput)
+	}
+	if !strings.Contains(approveOutput, "stage: ship\tstatus: succeeded") {
+		t.Fatalf("approve output %q missing succeeded ship", approveOutput)
+	}
+}
+
+func TestE2EDrySDLCHeadless(t *testing.T) {
+	root := moduleRoot(t)
+	pipelinePath := filepath.Join(root, "pipelines", "sdlc-dry-headless.yaml")
+
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "dry sdlc headless\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", pipelinePath, "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: succeeded") {
+		t.Fatalf("run output %q missing succeeded status", runOutput)
+	}
+	for _, want := range []string{
+		"stage: plan\tstatus: succeeded",
+		"stage: design\tstatus: succeeded",
+		"stage: implement\tstatus: succeeded",
+		"stage: test\tstatus: succeeded",
+		"stage: review\tstatus: succeeded",
+		"stage: ship\tstatus: succeeded",
+	} {
+		if !strings.Contains(runOutput, want) {
+			t.Fatalf("run output %q missing %q", runOutput, want)
+		}
+	}
+
+	runID := parseRunID(t, runOutput)
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "plan", "summary"), "dry plan summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "design", "summary"), "dry design summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "implement", "summary"), "dry implementation summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("artifacts", "review", "summary"), "dry review summary\n")
+	assertRunFile(t, dir, runID, filepath.Join("logs", "test.log"), "dry tests passed\n")
+}
+
+func TestE2EHeadlessSwapsSDLCTemplate(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	cfg := `
+default_worker: stub
+readonly_worker: stub
+work_root: .shuttle
+test:
+  command: ["/bin/sh", "-c", "printf 'tests passed\n'"]
+ship:
+  command: ["true"]
+workers:
+  stub:
+    bin: /bin/sh
+    args: ["-c", "mkdir -p \"$SHUTTLE_RUN_DIR/artifacts/$SHUTTLE_STAGE_ID\" && printf '%s summary\n' \"$SHUTTLE_STAGE_ID\" > \"$SHUTTLE_RUN_DIR/artifacts/$SHUTTLE_STAGE_ID/summary\" && cat \"$SHUTTLE_RUN_DIR/artifacts/$SHUTTLE_STAGE_ID/summary\""]
+`
+	writeFile(t, "shuttle.yaml", cfg)
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "embedded sdlc headless swap\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "sdlc", "--headless", "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "template: sdlc-headless") {
+		t.Fatalf("run output %q missing sdlc-headless template", runOutput)
+	}
+	if !strings.Contains(runOutput, "status: succeeded") {
+		t.Fatalf("run output %q missing succeeded status", runOutput)
+	}
+	for _, want := range []string{
+		"plan summary",
+		"design summary",
+		"implement summary",
+		"review summary",
+		"stage: ship\tstatus: succeeded",
+	} {
+		if !strings.Contains(runOutput, want) {
+			t.Fatalf("run output %q missing %q", runOutput, want)
+		}
+	}
+}
+
+func TestE2ESDLCStrictEmbeddedFailsWithoutArtifact(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	cfg := `
+default_worker: quiet
+readonly_worker: quiet
+work_root: .shuttle
+test:
+  command: ["true"]
+ship:
+  command: ["true"]
+workers:
+  quiet:
+    bin: /bin/sh
+    args: ["-c", "true"]
+`
+	writeFile(t, "shuttle.yaml", cfg)
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "strict sdlc failure\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "sdlc-headless", "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: failed") {
+		t.Fatalf("run output %q missing failed status", runOutput)
+	}
+	if !strings.Contains(runOutput, "stage: plan\tstatus: failed") {
+		t.Fatalf("run output %q missing failed plan", runOutput)
+	}
+
+	runID := parseRunID(t, runOutput)
+	out.Reset()
+	logsCmd := NewRootCommand(&out, &errOut)
+	logsCmd.SetArgs([]string{"logs", runID, "plan"})
+	if err := logsCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	logOutput := out.String()
+	if !strings.Contains(logOutput, "missing declared output plan/summary") {
+		t.Fatalf("logs output %q missing strict artifact failure", logOutput)
+	}
+}
+
+func TestPRFactoryHeadlessRegression(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	cfg := `
+default_worker: stub
+work_root: .shuttle
+test:
+  command: ["true"]
+open_pr:
+  command: ["true"]
+workers:
+  stub:
+    bin: /bin/sh
+    args: ["-c", "printf 'stub implement\n'"]
+`
+	writeFile(t, "shuttle.yaml", cfg)
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "headless regression\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "--headless", "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "template: pr-factory-headless") {
+		t.Fatalf("run output %q missing pr-factory-headless template", runOutput)
+	}
+	if !strings.Contains(runOutput, "status: succeeded") {
+		t.Fatalf("run output %q missing succeeded status", runOutput)
+	}
+}
+
+func TestPRFactoryEmptyStdoutRegression(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	cfg := `
+default_worker: quiet
+work_root: .shuttle
+test:
+  command: ["true"]
+open_pr:
+  command: ["true"]
+workers:
+  quiet:
+    bin: /bin/sh
+    args: ["-c", "true"]
+`
+	writeFile(t, "shuttle.yaml", cfg)
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "empty stdout regression\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "pr-factory-headless", "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: succeeded") {
+		t.Fatalf("run output %q missing succeeded status", runOutput)
+	}
+	if !strings.Contains(runOutput, "stage: implement\tstatus: succeeded") {
+		t.Fatalf("run output %q missing succeeded implement", runOutput)
+	}
+}
+
+func TestE2ESDLCShipOpensPR(t *testing.T) {
+	root := moduleRoot(t)
+	realShuttle := buildShuttleBinary(t, root)
+
+	dir := t.TempDir()
+	initGitRepoWithOriginURL(t, dir, filepath.Join(t.TempDir(), "not-a-remote"))
+	registerImportedRepo(t, dir, "acme", "widget")
+	chdir(t, t.TempDir())
+
+	ghLog := filepath.Join(dir, "gh.log")
+	fakeBin := filepath.Join(dir, "fake-bin")
+	writeFakeGH(t, fakeBin, ghLog)
+	wrapper := writeShuttleWrapper(t, dir)
+
+	t.Setenv("GH_LOG", ghLog)
+	t.Setenv("REAL_SHUTTLE_BIN", realShuttle)
+	t.Setenv("SHUTTLE_BIN", wrapper)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := sdlcStubConfig(`
+ship:
+  command: ["{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"]
+`)
+	writeFile(t, filepath.Join(dir, "shuttle.yaml"), cfg)
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "sdlc-headless", "--issue", "https://github.com/acme/widget/issues/42"})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: succeeded") {
+		t.Fatalf("run output %q missing succeeded status", runOutput)
+	}
+	if !strings.Contains(runOutput, "stage: ship\tstatus: succeeded") {
+		t.Fatalf("run output %q missing succeeded ship", runOutput)
+	}
+
+	ghLogOutput := readFile(t, ghLog)
+	for _, want := range []string{
+		"issue view 42 -R acme/widget --json title,body",
+		"pr list --head shuttle/issue-42 --state open -R acme/widget --json url",
+		"issue view 42 -R acme/widget --json title",
+		"pr create --head shuttle/issue-42 -R acme/widget --title Stub Issue --body Closes #42",
+	} {
+		if !strings.Contains(ghLogOutput, want) {
+			t.Fatalf("gh log %q missing %q", ghLogOutput, want)
+		}
+	}
+}
+
+func TestE2ESDLCIssueSmoke(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoWithOriginURL(t, dir, filepath.Join(t.TempDir(), "not-a-remote"))
+	registerImportedRepo(t, dir, "acme", "widget")
+	chdir(t, t.TempDir())
+
+	ghLog := filepath.Join(dir, "gh.log")
+	fakeBin := filepath.Join(dir, "fake-bin")
+	writeFakeGH(t, fakeBin, ghLog)
+	t.Setenv("GH_LOG", ghLog)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := sdlcStubConfig(`
+ship:
+  command: ["true"]
+`)
+	writeFile(t, filepath.Join(dir, "shuttle.yaml"), cfg)
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "sdlc-headless", "--issue", "https://github.com/acme/widget/issues/42"})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	runOutput := out.String()
+	if !strings.Contains(runOutput, "status: succeeded") {
+		t.Fatalf("run output %q missing succeeded status", runOutput)
+	}
+	runID := parseRunID(t, runOutput)
+	spec := readFile(t, filepath.Join(dir, ".shuttle", "runs", runID, "artifacts", "spec"))
+	if !strings.Contains(spec, "# Stub Issue") || !strings.Contains(spec, "Stub issue body") {
+		t.Fatalf("spec artifact %q missing issue contents", spec)
+	}
+
+	ghLogOutput := readFile(t, ghLog)
+	if !strings.Contains(ghLogOutput, "issue view 42 -R acme/widget --json title,body") {
+		t.Fatalf("gh log %q missing issue view", ghLogOutput)
 	}
 }
 
@@ -226,7 +591,7 @@ exit 98
 default_worker: stub
 work_root: .shuttle
 test:
-  command: ["true"]
+  command: ["/bin/sh", "-c", "printf 'tests passed\n'"]
 workers:
   stub:
     bin: /bin/sh
@@ -354,6 +719,106 @@ func flagValue(t *testing.T, line, flag string) string {
 	}
 	t.Fatalf("flag %q not found in %q", flag, line)
 	return ""
+}
+
+func writeFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func assertRunFile(t *testing.T, cwd, runID, relPath, want string) {
+	t.Helper()
+	got := readFile(t, filepath.Join(cwd, ".shuttle", "runs", runID, relPath))
+	if got != want {
+		t.Fatalf("%s = %q, want %q", relPath, got, want)
+	}
+}
+
+func sdlcStubConfig(extra string) string {
+	return `
+default_worker: stub
+readonly_worker: stub
+work_root: .shuttle
+test:
+  command: ["/bin/sh", "-c", "printf 'tests passed\n'"]
+workers:
+  stub:
+    bin: /bin/sh
+    args: ["-c", "mkdir -p \"$SHUTTLE_RUN_DIR/artifacts/$SHUTTLE_STAGE_ID\" && printf '%s summary\n' \"$SHUTTLE_STAGE_ID\" > \"$SHUTTLE_RUN_DIR/artifacts/$SHUTTLE_STAGE_ID/summary\" && cat \"$SHUTTLE_RUN_DIR/artifacts/$SHUTTLE_STAGE_ID/summary\""]
+` + extra
+}
+
+func registerImportedRepo(t *testing.T, path, owner, name string) {
+	t.Helper()
+	shuttleHome := t.TempDir()
+	t.Setenv("SHUTTLE_HOME", shuttleHome)
+
+	reg, err := registry.Open(filepath.Join(shuttleHome, "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+
+	if err := reg.Upsert(registry.Repo{
+		Owner: owner,
+		Name:  name,
+		URL:   "https://github.com/" + owner + "/" + name,
+		Path:  path,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFakeGH(t *testing.T, fakeBin, ghLog string) {
+	t.Helper()
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+echo "$@" >> "$GH_LOG"
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *"title,body"*) echo '{"title":"Stub Issue","body":"Stub issue body"}' ;;
+    *) echo '{"title":"Stub Issue"}' ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo 'https://github.com/acme/widget/pull/42'
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 98
+`
+	if err := os.WriteFile(filepath.Join(fakeBin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = ghLog
+}
+
+func writeShuttleWrapper(t *testing.T, dir string) string {
+	t.Helper()
+	wrapper := filepath.Join(dir, "shuttle-wrapper.sh")
+	body := "#!/bin/sh\nexec \"$REAL_SHUTTLE_BIN\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return wrapper
 }
 
 func buildShuttleBinary(t *testing.T, root string) string {
