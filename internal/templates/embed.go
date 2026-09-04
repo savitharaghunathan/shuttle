@@ -8,13 +8,14 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
 )
 
-//go:embed pr-factory.yaml pr-factory-headless.yaml sdlc.yaml
+//go:embed pr-factory.yaml pr-factory-headless.yaml sdlc.yaml sdlc-headless.yaml
 var files embed.FS
 
 var templateFiles = map[string]string{
 	"pr-factory":          "pr-factory.yaml",
 	"pr-factory-headless": "pr-factory-headless.yaml",
 	"sdlc":                "sdlc.yaml",
+	"sdlc-headless":       "sdlc-headless.yaml",
 }
 
 func Get(id string) (*pipeline.Pipeline, error) {
