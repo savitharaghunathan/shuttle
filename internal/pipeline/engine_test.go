@@ -896,6 +896,70 @@ func TestPersistedAgentRestoredOnFreshEngine(t *testing.T) {
 	}
 }
 
+func TestAgentOverrideSkipsReadOnlyStages(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.DefaultWorker = "cursor"
+	eng.Cfg.ReadOnlyWorker = "claude"
+
+	p := &Pipeline{
+		ID: "readonly-defaults",
+		Stages: []Stage{
+			{ID: "plan", ReadOnly: true},
+			{ID: "implement", DependsOn: []string{"plan"}},
+		},
+	}
+
+	runID, err := eng.StartRun(context.Background(), StartParams{
+		TemplateID: "readonly-defaults",
+		Pipeline:   p,
+		CWD:        dir,
+		Agent:      "cursor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["plan"].Worker != "claude" {
+		t.Fatalf("plan worker=%q want claude", sm["plan"].Worker)
+	}
+	if sm["implement"].Worker != "cursor" {
+		t.Fatalf("implement worker=%q want cursor", sm["implement"].Worker)
+	}
+}
+
+func TestExplicitWorkerNotOverridden(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.DefaultWorker = "cursor"
+	eng.Cfg.ReadOnlyWorker = "claude"
+
+	p := &Pipeline{
+		ID: "explicit-worker",
+		Stages: []Stage{
+			{ID: "plan", Worker: "codex", ReadOnly: true},
+			{ID: "implement", DependsOn: []string{"plan"}},
+		},
+	}
+
+	runID, err := eng.StartRun(context.Background(), StartParams{
+		TemplateID: "explicit-worker",
+		Pipeline:   p,
+		CWD:        dir,
+		Agent:      "cursor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["plan"].Worker != "codex" {
+		t.Fatalf("plan worker=%q want codex", sm["plan"].Worker)
+	}
+	if sm["implement"].Worker != "cursor" {
+		t.Fatalf("implement worker=%q want cursor", sm["implement"].Worker)
+	}
+}
+
 func TestImplementFailsWhenExpectedRemoteBranchMissing(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{
 		"implement": {Status: worker.StatusSucceeded, Summary: "impl ok"},
@@ -1041,6 +1105,286 @@ func TestImplementSucceedsWhenExpectedRemoteBranchPresent(t *testing.T) {
 	sm := stageMap(t, eng, runID)
 	if sm["implement"].Status != store.StageStatusSucceeded {
 		t.Fatalf("implement status=%q want succeeded", sm["implement"].Status)
+	}
+}
+
+func TestImplementFinalizeFailSkipsBranchCompliance(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: ""},
+	})
+	eng.Cfg.Concurrency = 1
+
+	origIsGitRepo := isGitRepo
+	origVerifyRemoteBranch := verifyRemoteBranch
+	t.Cleanup(func() {
+		isGitRepo = origIsGitRepo
+		verifyRemoteBranch = origVerifyRemoteBranch
+	})
+	isGitRepo = func(string) bool { return true }
+	verifyRemoteBranch = func(string, string) (bool, error) {
+		t.Fatal("VerifyRemoteBranch should not run after finalize failure")
+		return false, nil
+	}
+
+	p := &Pipeline{
+		ID: "sdlc",
+		Stages: []Stage{{
+			ID:      "implement",
+			Outputs: []string{"summary"},
+		}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "sdlc",
+		Pipeline:   p,
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["implement"].Status != store.StageStatusFailed {
+		t.Fatalf("implement status=%q want failed", sm["implement"].Status)
+	}
+	if sm["implement"].Summary == nil || !strings.Contains(*sm["implement"].Summary, "missing declared output implement/summary") {
+		t.Fatalf("implement summary=%v, want artifact error", sm["implement"].Summary)
+	}
+}
+
+func TestPRFactoryImplementEmptyStdoutStillSucceeds(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"implement": {Status: worker.StatusSucceeded, Summary: ""},
+	})
+	eng.Cfg.Concurrency = 1
+
+	origIsGitRepo := isGitRepo
+	origVerifyRemoteBranch := verifyRemoteBranch
+	t.Cleanup(func() {
+		isGitRepo = origIsGitRepo
+		verifyRemoteBranch = origVerifyRemoteBranch
+	})
+	isGitRepo = func(string) bool { return false }
+	verifyRemoteBranch = func(string, string) (bool, error) {
+		t.Fatal("VerifyRemoteBranch should not run outside git repos")
+		return false, nil
+	}
+
+	p := &Pipeline{
+		ID: "pr-factory",
+		Stages: []Stage{{
+			ID:      "implement",
+			Outputs: []string{"summary"},
+		}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "pr-factory",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusSucceeded {
+		t.Fatalf("run status=%q want succeeded", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["implement"].Status != store.StageStatusSucceeded {
+		t.Fatalf("implement status=%q want succeeded", sm["implement"].Status)
+	}
+}
+
+func TestSDLCMissingArtifactFails(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"plan": {Status: worker.StatusSucceeded, Summary: ""},
+	})
+	eng.Cfg.Concurrency = 1
+
+	p := &Pipeline{
+		ID: "sdlc",
+		Stages: []Stage{{
+			ID:      "plan",
+			Outputs: []string{"summary"},
+		}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "sdlc",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["plan"].Status != store.StageStatusFailed {
+		t.Fatalf("plan status=%q want failed", sm["plan"].Status)
+	}
+}
+
+func TestShipGuardFailsOnScaffoldEcho(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"ship": {Status: worker.StatusSucceeded, Summary: "should not run"},
+	})
+	eng.Cfg.Concurrency = 1
+
+	p := &Pipeline{
+		ID: "sdlc",
+		Stages: []Stage{{
+			ID:      "ship",
+			Command: []string{"echo", "ship skipped"},
+		}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "sdlc",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["ship"].Status != store.StageStatusFailed {
+		t.Fatalf("ship status=%q want failed", sm["ship"].Status)
+	}
+	if sm["ship"].Attempt != 0 {
+		t.Fatalf("ship attempt=%d want 0", sm["ship"].Attempt)
+	}
+	if sm["ship"].Summary == nil || !strings.Contains(*sm["ship"].Summary, "non-production ship command") {
+		t.Fatalf("ship summary=%v, want non-production ship command error", sm["ship"].Summary)
+	}
+}
+
+func TestShipGuardFailsOnLoadDefaultsEcho(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"ship": {Status: worker.StatusSucceeded, Summary: "should not run"},
+	})
+	eng.Cfg.Concurrency = 1
+	eng.Cfg.Ship.Command = config.LoadDefaults().Ship.Command
+
+	p := &Pipeline{
+		ID:     "sdlc",
+		Stages: []Stage{{ID: "ship"}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "sdlc",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["ship"].Status != store.StageStatusFailed {
+		t.Fatalf("ship status=%q want failed", sm["ship"].Status)
+	}
+	if sm["ship"].Attempt != 0 {
+		t.Fatalf("ship attempt=%d want 0", sm["ship"].Attempt)
+	}
+	if sm["ship"].Summary == nil || !strings.Contains(*sm["ship"].Summary, "non-production ship command") {
+		t.Fatalf("ship summary=%v, want non-production ship command error", sm["ship"].Summary)
+	}
+}
+
+func TestEnginePassesShuttleStageEnv(t *testing.T) {
+	cw := &captureWorker{
+		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
+	}
+
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("capture", cw)
+
+	cfg := &config.Config{
+		WorkRoot:    filepath.Join(dir, ".shuttle"),
+		Concurrency: 1,
+	}
+	eng := NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+
+	p := &Pipeline{ID: "env", Stages: []Stage{{ID: "plan", Worker: "capture"}}}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "env",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cw.lastReq.Env["SHUTTLE_RUN_DIR"] != run.RunDir {
+		t.Fatalf("SHUTTLE_RUN_DIR = %q, want %q", cw.lastReq.Env["SHUTTLE_RUN_DIR"], run.RunDir)
+	}
+	if cw.lastReq.Env["SHUTTLE_STAGE_ID"] != "plan" {
+		t.Fatalf("SHUTTLE_STAGE_ID = %q, want plan", cw.lastReq.Env["SHUTTLE_STAGE_ID"])
 	}
 }
 

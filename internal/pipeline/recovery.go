@@ -303,6 +303,9 @@ func (e *Engine) RetryRun(ctx context.Context, runID string, p RetryParams) (Ret
 		return RetryResult{}, fmt.Errorf("resolve branch: %w", err)
 	}
 	warnings := gitPreflight(parent.CWD, branch)
+	if parent.TemplateID == "sdlc" || parent.TemplateID == "sdlc-headless" {
+		warnings = append(warnings, "retry starts a new run; plan/design artifacts are not copied from the parent run")
+	}
 
 	newID, err := e.StartRun(ctx, StartParams{
 		TemplateID:  parent.TemplateID,

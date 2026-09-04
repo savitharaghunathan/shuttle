@@ -364,6 +364,23 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			Inputs:     collectDir(filepath.Join(run.RunDir, "inputs")),
 			Env:        envMap(),
 		}
+		bodies, err := loadArtifactBodies(run.RunDir, sid, pl)
+		if err != nil {
+			sr.Status = store.StageStatusFailed
+			msg := fmt.Sprintf("load artifact bodies: %v", err)
+			sr.Summary = &msg
+			if err := e.Store.UpdateStage(sr); err != nil {
+				return false, err
+			}
+			if err := e.skipRemaining(runID); err != nil {
+				return false, err
+			}
+			if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		rctx.ArtifactBodies = bodies
 		var renderedPrompt string
 		var renderedCmd []string
 		if stageDef != nil {
@@ -405,9 +422,31 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			}
 		}
 
+		if sid == "ship" && isStrictOutputTemplate(run.TemplateID) && config.IsNonProductionShipCommand(renderedCmd) {
+			sr.Status = store.StageStatusFailed
+			msg := fmt.Sprintf("non-production ship command is not allowed for %s", run.TemplateID)
+			sr.Summary = &msg
+			e.progressf("✗ stage %s failed\n", sid)
+			if err := e.Store.UpdateStage(sr); err != nil {
+				return false, err
+			}
+			if err := e.skipRemaining(runID); err != nil {
+				return false, err
+			}
+			if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
 		w, ok := e.Registry.Get(sr.Worker)
 		if !ok {
 			return false, fmt.Errorf("worker %q not registered", sr.Worker)
+		}
+		if stageDef != nil {
+			if err := ensureOutputDirs(run.RunDir, sid, stageDef.Outputs); err != nil {
+				return false, err
+			}
 		}
 
 		sr.Status = store.StageStatusRunning
@@ -441,6 +480,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			Model:    opts.Model,
 			Output:   e.Progress,
 			LogPath:  filepath.Join(run.RunDir, "logs", sid+".log"),
+			Env:      shuttleStageEnv(run.RunDir, sid),
 		}
 
 		result, execErr := w.Execute(execCtx, req)
@@ -483,6 +523,27 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 				return true, nil
 			}
 		} else {
+			if stageDef != nil {
+				if err := finalizeStageOutputs(run.RunDir, sid, stageDef.Outputs, &result, isStrictOutputTemplate(run.TemplateID)); err != nil {
+					sr.Status = store.StageStatusFailed
+					msg := err.Error()
+					sr.Summary = &msg
+					logPath := filepath.Join(run.RunDir, "logs", sid+".log")
+					sr.LogPath = &logPath
+					e.progressf("✗ stage %s failed\n", sid)
+					if err := e.Store.UpdateStage(sr); err != nil {
+						return false, err
+					}
+					if err := e.skipRemaining(runID); err != nil {
+						return false, err
+					}
+					if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+						return false, err
+					}
+					return true, nil
+				}
+			}
+
 			if sid == "implement" && isGitRepo(run.CWD) {
 				found, verifyErr := verifyRemoteBranch(run.CWD, branch)
 				switch {
@@ -689,7 +750,11 @@ func (e *Engine) applyDefaults(p *Pipeline, agentOverride string) *Pipeline {
 
 	for i := range pl.Stages {
 		if pl.Stages[i].Worker == "" {
-			pl.Stages[i].Worker = defaultWorker
+			if pl.Stages[i].ReadOnly {
+				pl.Stages[i].Worker = e.Cfg.EffectiveReadOnlyWorker()
+			} else {
+				pl.Stages[i].Worker = defaultWorker
+			}
 		}
 		if len(pl.Stages[i].Command) == 0 {
 			switch pl.Stages[i].ID {

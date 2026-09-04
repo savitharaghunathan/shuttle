@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,7 @@ type StageConfig struct {
 // Config is the top-level shuttle.yaml configuration.
 type Config struct {
 	DefaultWorker  string                  `yaml:"default_worker,omitempty"`
+	ReadOnlyWorker string                  `yaml:"readonly_worker,omitempty"`
 	WorkRoot       string                  `yaml:"work_root,omitempty"`
 	Concurrency    int                     `yaml:"concurrency,omitempty"`
 	DefaultTimeout time.Duration           `yaml:"default_timeout,omitempty"`
@@ -33,6 +35,7 @@ type Config struct {
 
 type fileConfig struct {
 	DefaultWorker  string                      `yaml:"default_worker"`
+	ReadOnlyWorker string                      `yaml:"readonly_worker"`
 	WorkRoot       string                      `yaml:"work_root"`
 	Concurrency    int                         `yaml:"concurrency"`
 	DefaultTimeout time.Duration               `yaml:"default_timeout"`
@@ -72,6 +75,7 @@ func LoadDefaults() *Config {
 func applyDefaults(raw *fileConfig) *Config {
 	cfg := &Config{
 		DefaultWorker:  raw.DefaultWorker,
+		ReadOnlyWorker: raw.ReadOnlyWorker,
 		WorkRoot:       raw.WorkRoot,
 		Concurrency:    raw.Concurrency,
 		DefaultTimeout: raw.DefaultTimeout,
@@ -122,6 +126,29 @@ func applyDefaults(raw *fileConfig) *Config {
 	}
 
 	return cfg
+}
+
+var nonProductionShipCommands = [][]string{
+	{"echo", "ship skipped: configure ship.command"}, // LoadDefaults
+	{"echo", "ship skipped"},                         // legacy scaffold
+}
+
+// IsNonProductionShipCommand reports whether the provided command matches
+// known non-production (echo) ship command stubs used in defaults/scaffold.
+func IsNonProductionShipCommand(cmd []string) bool {
+	for _, stub := range nonProductionShipCommands {
+		if slices.Equal(cmd, stub) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) EffectiveReadOnlyWorker() string {
+	if c.ReadOnlyWorker == "" {
+		return "claude"
+	}
+	return c.ReadOnlyWorker
 }
 
 func DefaultWorkerPresets() map[string]WorkerPreset {

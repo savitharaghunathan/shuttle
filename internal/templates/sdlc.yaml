@@ -2,22 +2,61 @@ id: sdlc
 version: "1"
 stages:
   - id: plan
+    readonly: true
+    prompt: |
+      Do NOT modify, create, or delete any files in {{.Cwd}}.
+      Do NOT run git commands.
+      Respond with your deliverable as markdown in your output; Shuttle records it as the stage artifact.
+
+      Create an implementation plan for the following task spec.
+
+      ## Task spec
+      {{.ArtifactBodies.spec}}
+    outputs: [summary]
   - id: design
+    readonly: true
     depends_on: [plan]
     prompt: |
+      Do NOT modify, create, or delete any files in {{.Cwd}}.
+      Do NOT run git commands.
+      Respond with your deliverable as markdown in your output; Shuttle records it as the stage artifact.
+
       Turn the accepted plan into a concrete implementation design.
+
+      ## Plan
+      {{.ArtifactBodies.plan}}
+    outputs: [summary]
   - id: implement
     depends_on: [design]
     prompt: |
-      Implement the approved design and summarize the changes.
+      Implement the approved design.
+      You MUST use branch {{.Branch}} exactly.
+      Create it from the default branch if needed, commit your changes, and push to origin.
+      If the branch already exists locally or on the remote, continue on it and push updates.
+      Summarize the result.
+
+      ## Design
+      {{.ArtifactBodies.design}}
     outputs: [summary]
   - id: test
     worker: shell
     depends_on: [implement]
   - id: review
+    readonly: true
     depends_on: [test]
     prompt: |
-      Review the implementation for correctness, risks, and missing tests.
+      Do NOT modify, create, or delete any files in {{.Cwd}}.
+      Do NOT run git commands.
+      Respond with your deliverable as markdown in your output; Shuttle records it as the stage artifact.
+
+      Review the implementation summary and test log for correctness, risks, and missing tests.
+      Your review is advisory; it does not block shipping in headless runs.
+
+      ## Implementation summary
+      {{.ArtifactBodies.implement}}
+
+      ## Test log tail
+      {{.ArtifactBodies.test}}
     outputs: [summary]
   - id: approve_ship
     worker: manual

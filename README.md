@@ -74,7 +74,7 @@ Global state lives in `SHUTTLE_HOME` (default `~/.shuttle`):
 
 ## Run modes
 
-### Issue-driven (headless)
+### Issue-driven PR factory (headless)
 
 ```bash
 shuttle run --issue https://github.com/org/repo/issues/1 \
@@ -96,6 +96,28 @@ shuttle run -t pr-factory --spec specs/feature.md
 
 Uses the current directory as the project checkout. Blocks at `approve_pr` unless you pass `--headless`.
 
+### Full SDLC (plan → PR)
+
+Use SDLC for larger work that benefits from separate planning, design, implementation, test, and review stages:
+
+```bash
+shuttle run -t sdlc --spec specs/feature.md
+shuttle run -t sdlc --issue https://github.com/org/repo/issues/42
+shuttle run -t sdlc --spec specs/feature.md --headless
+```
+
+`sdlc` runs `plan` → `design` → `implement` → `test` → `review` → `approve_ship` → `ship`. `sdlc-headless` skips `approve_ship`; `--headless -t sdlc` selects `sdlc-headless`. Bare `run --issue --headless` still selects `pr-factory-headless`, not SDLC.
+
+`pr-factory` is the fast issue-to-PR path: intake, implement, test, and open a PR. `sdlc` is the fuller factory path: it injects the spec or issue body into `plan`, injects upstream artifact content into each later prompt, and persists stage outputs under `.shuttle/runs/<run-id>/artifacts/<stage-id>/summary`. Prompts receive artifact **content**, not just artifact paths, so stdout-only agents can participate. Each injected artifact body is capped at 128 KiB.
+
+Headless SDLC is higher risk than headless `pr-factory`: `review` receives the implement summary plus the tail of `logs/test.log`, but review is advisory and does **not** block `ship`. Use headless SDLC only for trusted automated paths; gated SDLC lets you inspect artifacts before `approve_ship`.
+
+SDLC has four agent stages (`plan`, `design`, `implement`, `review`), so expect roughly 4× agent invocation cost and longer wall time. `--model` applies to every agent stage. `--agent` applies only to `implement`; read-only stages use `readonly_worker` (default `claude`) unless a local pipeline explicitly sets a worker.
+
+Retrying an SDLC run starts a new run from the frozen `inputs/spec.md` and discards prior plan/design/implement artifacts, rebuilding the chain from `plan`; the CLI prints a stderr hint for SDLC retries. Concurrent runs on the same issue are especially risky for SDLC because multiple four-stage runs may compete on the same `shuttle/issue-N` branch.
+
+Issues remain untrusted input. SDLC exposes issue text to four agent stages, so use `--issue -t sdlc` only with trusted issues and repos.
+
 ### Dry run (no agents)
 
 ```bash
@@ -108,6 +130,7 @@ Shuttle reads `shuttle.yaml` from the target repo. On `import repo`, Shuttle gen
 
 ```yaml
 default_worker: cursor
+readonly_worker: claude
 work_root: .shuttle
 test:
   command: ["go", "test", "./..."]
@@ -123,9 +146,11 @@ workers:
   #   args: ["run", "{{.Prompt}}"]
 ```
 
-`--agent` and `--model` on `shuttle run` override the default worker and are passed into preset arg templates (`{{.Prompt}}`, `{{.Model}}`). If `--model` is unset, empty template args are dropped so the CLI is not passed blank flags.
+`--agent` and `--model` on `shuttle run` override the default worker for standard agent stages and are passed into preset arg templates (`{{.Prompt}}`, `{{.Model}}`). SDLC read-only stages (`plan`, `design`, `review`) use `readonly_worker` and ignore `--agent`; `implement` uses `--agent`. If `--model` is unset, empty template args are dropped so the CLI is not passed blank flags.
 
 Built-in agent presets: `claude`, `codex`, `opencode`, `cursor`. Add any other agent under `workers:` in `shuttle.yaml` and use `--agent <name>` — no code change required. List registered workers with `shuttle workers`. Also: `intake`, `shell`, `exec`, `manual`.
+
+Sharp edge: repo-mutating presets such as `cursor` with `--yolo` should not be used for SDLC read-only stages. The embedded templates mark those stages `readonly: true`; if a local pipeline overlay sets `worker: cursor` on them, that overlay is choosing to give the agent write access.
 
 ## Branch and PR lifecycle
 
@@ -158,10 +183,18 @@ Set `SHUTTLE_BIN` when using a wrapper script or non-standard install location.
 
 ### Migration for existing repos
 
-`shuttle import repo` scaffolds new configs with the idempotent `open_pr` command, but existing repos keep their current `shuttle.yaml`. Update old configs manually:
+`shuttle import repo` scaffolds new configs with idempotent PR commands, but existing repos keep their current `shuttle.yaml`. SDLC `ship` fails fast on known placeholder echo commands:
+
+```text
+non-production ship command is not allowed for sdlc
+```
+
+Update old configs manually:
 
 ```yaml
 open_pr:
+  command: ["{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"]
+ship:
   command: ["{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"]
 ```
 
@@ -174,8 +207,9 @@ Embedded templates:
 - `pr-factory`: intake → implement (agent) → test → **approve_pr** → open_pr
 - `pr-factory-headless`: same without the manual gate
 - `sdlc`: plan → design → implement → test → review → approve_ship → ship
+- `sdlc-headless`: same without the manual gate
 
-Local pipeline overlays can live in `pipelines/`.
+Local pipeline overlays can live in `pipelines/`. Local `pipelines/sdlc-*` overlays are bridge mode unless their template ID is exactly embedded `sdlc` or `sdlc-headless`; experimental overlays such as `sdlc-dry` or `sdlc-foo` do not get strict SDLC output or ship-guard behavior automatically.
 
 ## Gates
 

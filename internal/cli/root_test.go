@@ -43,6 +43,23 @@ func TestRunRequiresSpecForPRFactory(t *testing.T) {
 	}
 }
 
+func TestRunRequiresSpecForSDLC(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	var out, errOut bytes.Buffer
+	cmd := NewRootCommand(&out, &errOut)
+	cmd.SetArgs([]string{"run", "-t", "sdlc"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("run without --spec succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "--spec is required for sdlc") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	old, err := os.Getwd()

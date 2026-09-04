@@ -54,10 +54,7 @@ func runArgv(ctx context.Context, req Request, argv []string) (Result, error) {
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = req.WorkDir
-	cmd.Env = os.Environ()
-	for key, value := range req.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
+	cmd.Env = mergeProcessEnv(req.Env)
 
 	var buf bytes.Buffer
 	writers := []io.Writer{&buf}

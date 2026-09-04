@@ -1,0 +1,33 @@
+id: sdlc-dry-headless
+version: "1"
+stages:
+  - id: plan
+    worker: shell
+    readonly: true
+    command: ["/bin/bash", "-c", "mkdir -p \"$SHUTTLE_RUN_DIR/artifacts/plan\" && printf 'dry plan summary\n' > \"$SHUTTLE_RUN_DIR/artifacts/plan/summary\" && cat \"$SHUTTLE_RUN_DIR/artifacts/plan/summary\""]
+    outputs: [summary]
+  - id: design
+    worker: shell
+    readonly: true
+    depends_on: [plan]
+    command: ["/bin/bash", "-c", "mkdir -p \"$SHUTTLE_RUN_DIR/artifacts/design\" && printf 'dry design summary\n' > \"$SHUTTLE_RUN_DIR/artifacts/design/summary\" && cat \"$SHUTTLE_RUN_DIR/artifacts/design/summary\""]
+    outputs: [summary]
+  - id: implement
+    worker: shell
+    depends_on: [design]
+    command: ["/bin/bash", "-c", "mkdir -p \"$SHUTTLE_RUN_DIR/artifacts/implement\" && printf 'dry implementation summary\n' > \"$SHUTTLE_RUN_DIR/artifacts/implement/summary\" && cat \"$SHUTTLE_RUN_DIR/artifacts/implement/summary\""]
+    outputs: [summary]
+  - id: test
+    worker: shell
+    depends_on: [implement]
+    command: ["/bin/bash", "-c", "mkdir -p \"$SHUTTLE_RUN_DIR/logs\" && printf 'dry tests passed\n' > \"$SHUTTLE_RUN_DIR/logs/test.log\" && cat \"$SHUTTLE_RUN_DIR/logs/test.log\""]
+  - id: review
+    worker: shell
+    readonly: true
+    depends_on: [test]
+    command: ["/bin/bash", "-c", "mkdir -p \"$SHUTTLE_RUN_DIR/artifacts/review\" && printf 'dry review summary\n' > \"$SHUTTLE_RUN_DIR/artifacts/review/summary\" && cat \"$SHUTTLE_RUN_DIR/artifacts/review/summary\""]
+    outputs: [summary]
+  - id: ship
+    worker: shell
+    depends_on: [review]
+    command: ["true"]
