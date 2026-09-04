@@ -422,6 +422,23 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			}
 		}
 
+		if sid == "ship" && isStrictOutputTemplate(run.TemplateID) && config.IsNonProductionShipCommand(renderedCmd) {
+			sr.Status = store.StageStatusFailed
+			msg := fmt.Sprintf("non-production ship command is not allowed for %s", run.TemplateID)
+			sr.Summary = &msg
+			e.progressf("✗ stage %s failed\n", sid)
+			if err := e.Store.UpdateStage(sr); err != nil {
+				return false, err
+			}
+			if err := e.skipRemaining(runID); err != nil {
+				return false, err
+			}
+			if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
 		w, ok := e.Registry.Get(sr.Worker)
 		if !ok {
 			return false, fmt.Errorf("worker %q not registered", sr.Worker)

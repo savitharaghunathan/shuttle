@@ -78,9 +78,15 @@ func newRunCommand(out io.Writer) *cobra.Command {
 			if headless && templateID == "pr-factory" {
 				templateID = "pr-factory-headless"
 			}
+			if headless && templateID == "sdlc" {
+				templateID = "sdlc-headless"
+			}
 
 			if issueURL == "" && templateID == "pr-factory" && specPath == "" {
 				return fmt.Errorf("--spec is required for pr-factory (or use --issue)")
+			}
+			if issueURL == "" && (templateID == "sdlc" || templateID == "sdlc-headless") && specPath == "" {
+				return fmt.Errorf("--spec is required for sdlc (or use --issue)")
 			}
 			if issueURL != "" && specPath != "" {
 				return fmt.Errorf("use either --issue or --spec, not both")
@@ -124,12 +130,12 @@ func newRunCommand(out io.Writer) *cobra.Command {
 			return printRun(out, app.store, runID, true, true)
 		},
 	}
-	cmd.Flags().StringVarP(&templateID, "template", "t", "", "template id (pr-factory, pr-factory-headless, sdlc)")
+	cmd.Flags().StringVarP(&templateID, "template", "t", "", "template id (pr-factory, pr-factory-headless, sdlc, sdlc-headless)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "path to the task spec")
 	cmd.Flags().StringVar(&issueURL, "issue", "", "GitHub issue URL (requires imported repo)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent runtime for implement stages (built-ins or any workers: name in shuttle.yaml)")
 	cmd.Flags().StringVar(&model, "model", "", "model passed to agent runtime ({{.Model}} in preset args)")
-	cmd.Flags().BoolVar(&headless, "headless", false, "run without manual approval gates")
+	cmd.Flags().BoolVar(&headless, "headless", false, "skip manual gates for pr-factory/sdlc (selects headless template)")
 	return cmd
 }
 

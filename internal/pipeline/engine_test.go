@@ -1253,6 +1253,94 @@ func TestSDLCMissingArtifactFails(t *testing.T) {
 	}
 }
 
+func TestShipGuardFailsOnScaffoldEcho(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"ship": {Status: worker.StatusSucceeded, Summary: "should not run"},
+	})
+	eng.Cfg.Concurrency = 1
+
+	p := &Pipeline{
+		ID: "sdlc",
+		Stages: []Stage{{
+			ID:      "ship",
+			Command: []string{"echo", "ship skipped"},
+		}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "sdlc",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["ship"].Status != store.StageStatusFailed {
+		t.Fatalf("ship status=%q want failed", sm["ship"].Status)
+	}
+	if sm["ship"].Attempt != 0 {
+		t.Fatalf("ship attempt=%d want 0", sm["ship"].Attempt)
+	}
+	if sm["ship"].Summary == nil || !strings.Contains(*sm["ship"].Summary, "non-production ship command") {
+		t.Fatalf("ship summary=%v, want non-production ship command error", sm["ship"].Summary)
+	}
+}
+
+func TestShipGuardFailsOnLoadDefaultsEcho(t *testing.T) {
+	eng, dir := newTestEngine(t, map[string]worker.Result{
+		"ship": {Status: worker.StatusSucceeded, Summary: "should not run"},
+	})
+	eng.Cfg.Concurrency = 1
+	eng.Cfg.Ship.Command = config.LoadDefaults().Ship.Command
+
+	p := &Pipeline{
+		ID:     "sdlc",
+		Stages: []Stage{{ID: "ship"}},
+	}
+	ctx := context.Background()
+	runID, err := eng.StartRun(ctx, StartParams{
+		TemplateID: "sdlc",
+		Pipeline:   p,
+		CWD:        dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := eng.Store.GetRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.RunStatusFailed {
+		t.Fatalf("run status=%q want failed", run.Status)
+	}
+	sm := stageMap(t, eng, runID)
+	if sm["ship"].Status != store.StageStatusFailed {
+		t.Fatalf("ship status=%q want failed", sm["ship"].Status)
+	}
+	if sm["ship"].Attempt != 0 {
+		t.Fatalf("ship attempt=%d want 0", sm["ship"].Attempt)
+	}
+	if sm["ship"].Summary == nil || !strings.Contains(*sm["ship"].Summary, "non-production ship command") {
+		t.Fatalf("ship summary=%v, want non-production ship command error", sm["ship"].Summary)
+	}
+}
+
 func TestEnginePassesShuttleStageEnv(t *testing.T) {
 	cw := &captureWorker{
 		result: worker.Result{Status: worker.StatusSucceeded, Summary: "ok"},
