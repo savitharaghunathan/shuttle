@@ -69,8 +69,8 @@ func TestIsStrictOutputTemplate(t *testing.T) {
 		"pr-factory":    false,
 	}
 	for id, want := range tests {
-		if got := isStrictOutputTemplate(id); got != want {
-			t.Fatalf("isStrictOutputTemplate(%q) = %v, want %v", id, got, want)
+		if got := IsStrictOutputTemplate(id); got != want {
+			t.Fatalf("IsStrictOutputTemplate(%q) = %v, want %v", id, got, want)
 		}
 	}
 }

@@ -422,7 +422,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			}
 		}
 
-		if sid == "ship" && isStrictOutputTemplate(run.TemplateID) && config.IsNonProductionShipCommand(renderedCmd) {
+		if sid == "ship" && IsStrictOutputTemplate(run.TemplateID) && config.IsNonProductionShipCommand(renderedCmd) {
 			sr.Status = store.StageStatusFailed
 			msg := fmt.Sprintf("non-production ship command is not allowed for %s", run.TemplateID)
 			sr.Summary = &msg
@@ -524,7 +524,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			}
 		} else {
 			if stageDef != nil {
-				if err := finalizeStageOutputs(run.RunDir, sid, stageDef.Outputs, &result, isStrictOutputTemplate(run.TemplateID)); err != nil {
+				if err := finalizeStageOutputs(run.RunDir, sid, stageDef.Outputs, &result, IsStrictOutputTemplate(run.TemplateID)); err != nil {
 					sr.Status = store.StageStatusFailed
 					msg := err.Error()
 					sr.Summary = &msg

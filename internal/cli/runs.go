@@ -32,7 +32,7 @@ func newResumeCommand(out io.Writer) *cobra.Command {
 			if err := app.engine.ResumeRun(cmd.Context(), runID); err != nil {
 				return err
 			}
-			return printRun(out, app.store, runID, true, true)
+			return printRun(out, app.store, runID, printRunOpts{hints: true})
 		},
 	}
 }
@@ -63,7 +63,7 @@ func newRetryCommand(out, errOut io.Writer) *cobra.Command {
 				fmt.Fprintf(errOut, "warning: %s\n", wmsg)
 			}
 			fmt.Fprintf(out, "retry: %s (parent %s)\n", res.RunID, shortID(runID))
-			return printRun(out, app.store, res.RunID, true, true)
+			return printRun(out, app.store, res.RunID, printRunOpts{hints: true})
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "override agent for the new run")

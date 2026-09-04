@@ -66,7 +66,10 @@ func nonEmptyFile(path string) (bool, error) {
 	return !info.IsDir() && info.Size() > 0, nil
 }
 
-func isStrictOutputTemplate(id string) bool {
+// IsStrictOutputTemplate reports whether a template enforces declared stage
+// outputs. Only the embedded SDLC templates are strict; local overlays that
+// copy them keep the permissive stdout bridge.
+func IsStrictOutputTemplate(id string) bool {
 	switch id {
 	case "sdlc", "sdlc-headless":
 		return true

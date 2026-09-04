@@ -220,6 +220,15 @@ shuttle approve <run-id> approve_pr --message "approved"
 shuttle reject <run-id> approve_pr --message "reason"
 ```
 
+The stage id is optional when exactly one stage is waiting, so gated SDLC needs only `shuttle approve <run-id>`. Run ids accept an 8-character-or-longer prefix everywhere.
+
+Before approving `approve_ship`, read what the agents produced:
+
+```bash
+shuttle artifacts <run-id>          # list deliverables with sizes and paths
+shuttle artifacts <run-id> plan     # print one stage's deliverable
+```
+
 ## Run state and logs
 
 Per-repo run state: `<repo>/.shuttle/shuttle.db`
@@ -227,11 +236,16 @@ Per-repo run state: `<repo>/.shuttle/shuttle.db`
 During `shuttle run`, progress streams to the terminal: stage start/complete lines plus live worker output (agent logs stream as they run). Stage logs are also saved under `.shuttle/runs/<run-id>/logs/`.
 
 ```bash
-shuttle status <run-id>
+shuttle status <run-id>                    # stages plus branch, run dir, outputs mode
+shuttle status <run-id> --json
 shuttle logs <run-id>
 shuttle logs <run-id> <stage-id>
+shuttle logs <run-id> --stage implement --tail 50
+shuttle artifacts <run-id>
 shuttle cancel <run-id>
 ```
+
+`status` reports `outputs: strict` for the embedded `sdlc` templates and `outputs: bridge` for overlays that declare stage outputs without strict enforcement, so a local `pipelines/sdlc-*.yaml` run is distinguishable from a real one.
 
 `shuttle serve` starts an unauthenticated local HTTP API on `127.0.0.1:8080`. Treat it as local-only.
 

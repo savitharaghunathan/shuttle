@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,6 +176,238 @@ func TestE2EDrySDLC(t *testing.T) {
 	}
 	if !strings.Contains(approveOutput, "stage: ship\tstatus: succeeded") {
 		t.Fatalf("approve output %q missing succeeded ship", approveOutput)
+	}
+}
+
+func TestE2EDrySDLCApproveByPrefixWithoutStageID(t *testing.T) {
+	root := moduleRoot(t)
+	pipelinePath := filepath.Join(root, "pipelines", "sdlc-dry.yaml")
+
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "dry sdlc prefix approve\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", pipelinePath, "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	runID := parseRunID(t, out.String())
+	if len(runID) < 8 {
+		t.Fatalf("run id %q too short to test prefix resolution", runID)
+	}
+
+	// A run-ID prefix and an inferred stage id must both work; approve used to
+	// ship the run and then fail printing the summary from the unresolved arg.
+	out.Reset()
+	approveCmd := NewRootCommand(&out, &errOut)
+	approveCmd.SetArgs([]string{"approve", runID[:8]})
+	if err := approveCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	approveOutput := out.String()
+	for _, want := range []string{
+		"approved: " + runID + " approve_ship",
+		"status: succeeded",
+		"stage: ship\tstatus: succeeded",
+	} {
+		if !strings.Contains(approveOutput, want) {
+			t.Fatalf("approve output %q missing %q", approveOutput, want)
+		}
+	}
+
+	out.Reset()
+	againCmd := NewRootCommand(&out, &errOut)
+	againCmd.SetArgs([]string{"approve", runID[:8]})
+	err := againCmd.Execute()
+	if err == nil {
+		t.Fatal("approve on a finished run succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "no stage waiting for approval") {
+		t.Fatalf("error = %v, want no-waiting-stage error", err)
+	}
+}
+
+func TestE2EDrySDLCArtifactsCommand(t *testing.T) {
+	root := moduleRoot(t)
+	pipelinePath := filepath.Join(root, "pipelines", "sdlc-dry.yaml")
+
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "dry sdlc artifacts\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", pipelinePath, "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	runOutput := out.String()
+	runID := parseRunID(t, runOutput)
+	if !strings.Contains(runOutput, "artifacts: shuttle artifacts "+runID) {
+		t.Fatalf("blocked run output %q missing artifacts hint", runOutput)
+	}
+
+	out.Reset()
+	listCmd := NewRootCommand(&out, &errOut)
+	listCmd.SetArgs([]string{"artifacts", runID[:8]})
+	if err := listCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	listOutput := out.String()
+	for _, want := range []string{"ARTIFACT", "spec", "plan/summary", "design/summary", "implement/summary"} {
+		if !strings.Contains(listOutput, want) {
+			t.Fatalf("artifacts list %q missing %q", listOutput, want)
+		}
+	}
+
+	out.Reset()
+	showCmd := NewRootCommand(&out, &errOut)
+	showCmd.SetArgs([]string{"artifacts", runID, "plan"})
+	if err := showCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "dry plan summary\n" {
+		t.Fatalf("artifacts plan = %q, want %q", out.String(), "dry plan summary\n")
+	}
+}
+
+func TestE2EStatusShowsRunMetadataAndJSON(t *testing.T) {
+	root := moduleRoot(t)
+	pipelinePath := filepath.Join(root, "pipelines", "sdlc-dry.yaml")
+
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "dry sdlc status\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", pipelinePath, "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	runID := parseRunID(t, out.String())
+
+	out.Reset()
+	statusCmd := NewRootCommand(&out, &errOut)
+	statusCmd.SetArgs([]string{"status", runID})
+	if err := statusCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	statusOutput := out.String()
+	for _, want := range []string{
+		"run: " + runID,
+		"outputs: bridge",
+		"branch: shuttle/run-",
+		"run dir: ",
+		"approval: shuttle approve " + runID + " approve_ship",
+	} {
+		if !strings.Contains(statusOutput, want) {
+			t.Fatalf("status output %q missing %q", statusOutput, want)
+		}
+	}
+
+	out.Reset()
+	jsonCmd := NewRootCommand(&out, &errOut)
+	jsonCmd.SetArgs([]string{"status", runID, "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var detail struct {
+		ID           string `json:"id"`
+		Status       string `json:"status"`
+		Branch       string `json:"branch"`
+		OutputsMode  string `json:"outputs_mode"`
+		CurrentStage string `json:"current_stage"`
+		Stages       []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"stages"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &detail); err != nil {
+		t.Fatalf("status --json is not valid JSON: %v\n%s", err, out.String())
+	}
+	if detail.ID != runID {
+		t.Fatalf("json id = %q, want %q", detail.ID, runID)
+	}
+	if detail.Status != "blocked" {
+		t.Fatalf("json status = %q, want blocked", detail.Status)
+	}
+	if detail.OutputsMode != "bridge" {
+		t.Fatalf("json outputs_mode = %q, want bridge", detail.OutputsMode)
+	}
+	if detail.CurrentStage != "approve_ship" {
+		t.Fatalf("json current_stage = %q, want approve_ship", detail.CurrentStage)
+	}
+	var stageOrder []string
+	for _, stage := range detail.Stages {
+		stageOrder = append(stageOrder, stage.ID)
+	}
+	want := "plan,design,implement,test,review,approve_ship,ship"
+	if strings.Join(stageOrder, ",") != want {
+		t.Fatalf("json stage order = %v, want %s", stageOrder, want)
+	}
+}
+
+func TestE2ELogsTailLimitsOutput(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	cfg := `
+default_worker: chatty
+work_root: .shuttle
+test:
+  command: ["true"]
+open_pr:
+  command: ["true"]
+workers:
+  chatty:
+    bin: /bin/sh
+    args: ["-c", "for i in 1 2 3 4 5 6 7 8; do echo \"implement line $i\"; done"]
+`
+	writeFile(t, "shuttle.yaml", cfg)
+	specPath := filepath.Join(dir, "spec.md")
+	writeFile(t, specPath, "logs tail\n")
+
+	var out, errOut bytes.Buffer
+	runCmd := NewRootCommand(&out, &errOut)
+	runCmd.SetArgs([]string{"run", "-t", "pr-factory-headless", "--spec", specPath})
+	if err := runCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	runID := parseRunID(t, out.String())
+
+	out.Reset()
+	logsCmd := NewRootCommand(&out, &errOut)
+	logsCmd.SetArgs([]string{"logs", runID, "--stage", "implement", "--tail", "2"})
+	if err := logsCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	logOutput := out.String()
+	if !strings.Contains(logOutput, "implement line 8") {
+		t.Fatalf("logs --tail output %q missing last line", logOutput)
+	}
+	if strings.Contains(logOutput, "implement line 1\n") {
+		t.Fatalf("logs --tail output %q should have dropped early lines", logOutput)
+	}
+
+	out.Reset()
+	missingCmd := NewRootCommand(&out, &errOut)
+	missingCmd.SetArgs([]string{"logs", runID, "--stage", "nope"})
+	err := missingCmd.Execute()
+	if err == nil {
+		t.Fatal("logs for unknown stage succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "no logs found for stage nope") {
+		t.Fatalf("error = %v, want stage-specific message", err)
 	}
 }
 
