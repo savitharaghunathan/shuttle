@@ -63,3 +63,32 @@ func TestEffectiveReadOnlyWorkerUsesConfiguredValue(t *testing.T) {
 		t.Fatalf("EffectiveReadOnlyWorker()=%q want codex", got)
 	}
 }
+
+func TestIsNonProductionShipCommand_LoadDefaultsEcho(t *testing.T) {
+	cfg := config.LoadDefaults()
+	if !config.IsNonProductionShipCommand(cfg.Ship.Command) {
+		t.Fatalf("LoadDefaults Ship.Command=%v expected non-production echo stub", cfg.Ship.Command)
+	}
+}
+
+func TestIsNonProductionShipCommand_ScaffoldEcho(t *testing.T) {
+	cmd := []string{"echo", "ship skipped"}
+	if !config.IsNonProductionShipCommand(cmd) {
+		t.Fatalf("scaffold legacy echo should be recognized as non-production")
+	}
+}
+
+func TestIsNonProductionShipCommand_PROpenFalse(t *testing.T) {
+	cfg := config.LoadDefaults()
+	if config.IsNonProductionShipCommand(cfg.OpenPR.Command) {
+		t.Fatalf("OpenPR command should not be considered a non-production ship command")
+	}
+}
+
+func TestLoadDefaultsShipRemainsEcho(t *testing.T) {
+	cfg := config.LoadDefaults()
+	want := []string{"echo", "ship skipped: configure ship.command"}
+	if !reflect.DeepEqual(cfg.Ship.Command, want) {
+		t.Fatalf("LoadDefaults Ship.Command=%v want %v", cfg.Ship.Command, want)
+	}
+}

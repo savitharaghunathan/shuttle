@@ -49,7 +49,11 @@ func WriteShuttleYAMLIfAbsent(repoPath string, testCmd []string) error {
 			"--branch", "{{.Branch}}",
 			"--issue", "{{.IssueRef}}",
 		}},
-		Ship: scaffoldStage{Command: []string{"echo", "ship skipped"}},
+		Ship: scaffoldStage{Command: []string{
+			"{{.ShuttleBin}}", "pr", "open",
+			"--branch", "{{.Branch}}",
+			"--issue", "{{.IssueRef}}",
+		}},
 		Workers: map[string]scaffoldWorker{
 			"shell": {Bin: "/bin/bash"},
 			"claude": {

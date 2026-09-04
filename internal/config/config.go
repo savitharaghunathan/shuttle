@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -125,6 +126,22 @@ func applyDefaults(raw *fileConfig) *Config {
 	}
 
 	return cfg
+}
+
+var nonProductionShipCommands = [][]string{
+	{"echo", "ship skipped: configure ship.command"}, // LoadDefaults
+	{"echo", "ship skipped"},                         // legacy scaffold
+}
+
+// IsNonProductionShipCommand reports whether the provided command matches
+// known non-production (echo) ship command stubs used in defaults/scaffold.
+func IsNonProductionShipCommand(cmd []string) bool {
+	for _, stub := range nonProductionShipCommands {
+		if slices.Equal(cmd, stub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) EffectiveReadOnlyWorker() string {
