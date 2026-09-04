@@ -41,7 +41,18 @@ Explicit import stays the default; auto-import is opt-in behavior for faster ite
 ### Full SDLC pipeline
 **Goal:** Ship the embedded `sdlc` template as a first-class product path: plan → design → implement → test → review → approve → ship.
 
-MVP proved `pr-factory`; SDLC is the longer-horizon factory mode for larger work.
+Implementation complete on `feat/sdlc-pipeline`; mark Shipped after dogfood checklist.
+
+Capabilities ready on the feature branch:
+
+- `sdlc` and `sdlc-headless` embedded templates with plan, design, implement, test, review, and ship stages.
+- Content injection for spec, upstream stage summaries, and review test-log tail, with a 128 KiB cap per injected body.
+- Strict output enforcement and non-production ship-command guard for embedded SDLC templates only.
+- `--headless -t sdlc` selects `sdlc-headless`; bare `run --issue --headless` remains `pr-factory-headless`.
+- Read-only planning/design/review stages use `readonly_worker`; `--agent` applies to implement only and `--model` applies to all agent stages.
+- SDLC retry rebuilds from `plan` using the frozen spec and warns that prior artifacts are discarded.
+
+Dogfood checklist before moving to Shipped: run gated SDLC in a real repo with scaffolded `ship.command`, inspect plan/design/implement artifacts, approve `approve_ship`, confirm PR open is idempotent, and optionally run `sdlc-headless` on a throwaway spec.
 
 ---
 
