@@ -426,6 +426,11 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		if !ok {
 			return false, fmt.Errorf("worker %q not registered", sr.Worker)
 		}
+		if stageDef != nil {
+			if err := ensureOutputDirs(run.RunDir, sid, stageDef.Outputs); err != nil {
+				return false, err
+			}
+		}
 
 		sr.Status = store.StageStatusRunning
 		sr.Attempt++
@@ -458,6 +463,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			Model:    opts.Model,
 			Output:   e.Progress,
 			LogPath:  filepath.Join(run.RunDir, "logs", sid+".log"),
+			Env:      shuttleStageEnv(run.RunDir, sid),
 		}
 
 		result, execErr := w.Execute(execCtx, req)
@@ -500,6 +506,27 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 				return true, nil
 			}
 		} else {
+			if stageDef != nil {
+				if err := finalizeStageOutputs(run.RunDir, sid, stageDef.Outputs, &result, isStrictOutputTemplate(run.TemplateID)); err != nil {
+					sr.Status = store.StageStatusFailed
+					msg := err.Error()
+					sr.Summary = &msg
+					logPath := filepath.Join(run.RunDir, "logs", sid+".log")
+					sr.LogPath = &logPath
+					e.progressf("✗ stage %s failed\n", sid)
+					if err := e.Store.UpdateStage(sr); err != nil {
+						return false, err
+					}
+					if err := e.skipRemaining(runID); err != nil {
+						return false, err
+					}
+					if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+						return false, err
+					}
+					return true, nil
+				}
+			}
+
 			if sid == "implement" && isGitRepo(run.CWD) {
 				found, verifyErr := verifyRemoteBranch(run.CWD, branch)
 				switch {
