@@ -6,16 +6,17 @@ import (
 )
 
 type RenderContext struct {
-	RunID      string
-	StageID    string
-	Cwd        string
-	RunDir     string
-	IssueRef   string
-	Branch     string
-	ShuttleBin string
-	Artifacts  map[string]string
-	Inputs     map[string]string
-	Env        map[string]string
+	RunID          string
+	StageID        string
+	Cwd            string
+	RunDir         string
+	IssueRef       string
+	Branch         string
+	ShuttleBin     string
+	Artifacts      map[string]string
+	ArtifactBodies map[string]string
+	Inputs         map[string]string
+	Env            map[string]string
 }
 
 func Render(tmpl string, ctx RenderContext) (string, error) {

@@ -364,6 +364,23 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			Inputs:     collectDir(filepath.Join(run.RunDir, "inputs")),
 			Env:        envMap(),
 		}
+		bodies, err := loadArtifactBodies(run.RunDir, sid, pl)
+		if err != nil {
+			sr.Status = store.StageStatusFailed
+			msg := fmt.Sprintf("load artifact bodies: %v", err)
+			sr.Summary = &msg
+			if err := e.Store.UpdateStage(sr); err != nil {
+				return false, err
+			}
+			if err := e.skipRemaining(runID); err != nil {
+				return false, err
+			}
+			if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		rctx.ArtifactBodies = bodies
 		var renderedPrompt string
 		var renderedCmd []string
 		if stageDef != nil {
