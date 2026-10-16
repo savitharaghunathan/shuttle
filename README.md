@@ -112,7 +112,7 @@ shuttle run -t sdlc --spec specs/feature.md --headless
 
 Headless SDLC is higher risk than headless `pr-factory`: `review` receives the implement summary plus the tail of `logs/test.log`, but review is advisory and does **not** block `ship`. Use headless SDLC only for trusted automated paths; gated SDLC lets you inspect artifacts before `approve_ship`.
 
-SDLC has four agent stages (`plan`, `design`, `implement`, `review`), so expect roughly 4× agent invocation cost and longer wall time. `--model` applies to every agent stage. `--agent` applies only to `implement`; read-only stages use `readonly_worker` (default `claude`) unless a local pipeline explicitly sets a worker.
+SDLC has four agent stages (`plan`, `design`, `implement`, `review`), so expect roughly 4× agent invocation cost and longer wall time. `--model` applies to every agent stage. `--agent` applies only to `implement`; read-only stages use `readonly_worker` (default: `default_worker`) unless a local pipeline explicitly sets a worker. Readonly stages drop `--yolo` from the worker argv.
 
 Retrying an SDLC run starts a new run from the frozen `inputs/spec.md` and discards prior plan/design/implement artifacts, rebuilding the chain from `plan`; the CLI prints a stderr hint for SDLC retries. Concurrent runs on the same issue are especially risky for SDLC because multiple four-stage runs may compete on the same `shuttle/issue-N` branch.
 
@@ -130,7 +130,7 @@ Shuttle reads `shuttle.yaml` from the target repo. On `import repo`, Shuttle gen
 
 ```yaml
 default_worker: cursor
-readonly_worker: claude
+readonly_worker: cursor
 work_root: .shuttle
 test:
   command: ["go", "test", "./..."]
@@ -146,7 +146,7 @@ workers:
   #   args: ["run", "{{.Prompt}}"]
 ```
 
-`--agent` and `--model` on `shuttle run` override the default worker for standard agent stages and are passed into preset arg templates (`{{.Prompt}}`, `{{.Model}}`). SDLC read-only stages (`plan`, `design`, `review`) use `readonly_worker` and ignore `--agent`; `implement` uses `--agent`. If `--model` is unset, empty template args are dropped so the CLI is not passed blank flags.
+`--agent` and `--model` on `shuttle run` override the default worker for standard agent stages and are passed into preset arg templates (`{{.Prompt}}`, `{{.Model}}`). SDLC read-only stages (`plan`, `design`, `review`) use `readonly_worker` (falls back to `default_worker` when unset) and ignore `--agent`; `implement` uses `--agent`. `--yolo` is stripped from readonly stage argv. If `--model` is unset, empty template args are dropped so the CLI is not passed blank flags.
 
 Built-in agent presets: `claude`, `codex`, `opencode`, `cursor`. Add any other agent under `workers:` in `shuttle.yaml` and use `--agent <name>` — no code change required. List registered workers with `shuttle workers`. Also: `intake`, `shell`, `exec`, `manual`.
 
@@ -183,7 +183,7 @@ Set `SHUTTLE_BIN` when using a wrapper script or non-standard install location.
 
 ### Migration for existing repos
 
-`shuttle import repo` scaffolds new configs with idempotent PR commands, but existing repos keep their current `shuttle.yaml`. SDLC `ship` fails fast on known placeholder echo commands:
+`shuttle import repo` scaffolds new configs with idempotent PR commands, but existing repos keep their current `shuttle.yaml`. Embedded `sdlc` / `sdlc-headless` fail at **run start** (before any agent) on known placeholder echo `ship.command`:
 
 ```text
 non-production ship command is not allowed for sdlc
@@ -291,8 +291,8 @@ shuttle retry <run-id> --force          # retry a succeeded run (sharp edge)
 - **Do not edit pipeline YAML for in-flight runs** — template drift blocks resume.
 - Retry uses a **frozen spec** (`inputs/spec.md`); it does not re-fetch the issue — use `run --issue` for that.
 - Retry does **not** clean git; inspect `git status` / open PRs first.
-- Retry runs extended git preflight warnings (advisory): dirty tree, non-default branch, local branch already exists, open PR already exists.
-- Resume skips retry preflight checks and continues the same run state.
+- `run` and retry print the same advisory git preflight: dirty tree, non-default branch, local leftover branch, open PR already exists.
+- Resume skips those checks and continues the same run state.
 - Retrying a succeeded run with `--force` can update the existing PR on that branch (it does not open a second PR).
 - See `Branch and PR lifecycle` for branch naming, idempotent PR-open behavior, and migration.
 - API resume/retry POSTs **block** for the full run; prefer the CLI for long recovery runs, or set a 30+ min client timeout.

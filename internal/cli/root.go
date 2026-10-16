@@ -42,7 +42,7 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 	root.SetErr(errOut)
 
 	root.AddCommand(
-		newRunCommand(out),
+		newRunCommand(out, errOut),
 		newImportCommand(out),
 		newPRCommand(out, errOut),
 		newReposCommand(out),
@@ -61,7 +61,7 @@ func NewRootCommand(out, errOut io.Writer) *cobra.Command {
 	return root
 }
 
-func newRunCommand(out io.Writer) *cobra.Command {
+func newRunCommand(out, errOut io.Writer) *cobra.Command {
 	var templateID string
 	var specPath string
 	var issueURL string
@@ -106,6 +106,9 @@ func newRunCommand(out io.Writer) *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+			for _, wmsg := range app.engine.StartWarnings(runID) {
+				fmt.Fprintf(errOut, "warning: %s\n", wmsg)
 			}
 			fmt.Fprintf(out, "run: %s\n", runID)
 			fmt.Fprintf(out, "template: %s\n\n", resolvedTemplate)

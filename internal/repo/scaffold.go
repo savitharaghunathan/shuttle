@@ -11,6 +11,7 @@ import (
 
 type scaffoldConfig struct {
 	DefaultWorker  string                    `yaml:"default_worker"`
+	ReadOnlyWorker string                    `yaml:"readonly_worker,omitempty"`
 	WorkRoot       string                    `yaml:"work_root"`
 	Concurrency    int                       `yaml:"concurrency"`
 	DefaultTimeout string                    `yaml:"default_timeout"`
@@ -40,6 +41,7 @@ func WriteShuttleYAMLIfAbsent(repoPath string, testCmd []string) error {
 
 	cfg := scaffoldConfig{
 		DefaultWorker:  "cursor",
+		ReadOnlyWorker: "cursor",
 		WorkRoot:       ".shuttle",
 		Concurrency:    1,
 		DefaultTimeout: "30m",

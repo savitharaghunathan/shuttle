@@ -95,11 +95,13 @@ func loadTailBody(bodies map[string]string, key, path string, maxBytes int64) er
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			bodies[key] = ""
 			return nil
 		}
 		return fmt.Errorf("stat artifact %s: %w", key, err)
 	}
 	if info.Size() == 0 {
+		bodies[key] = ""
 		return nil
 	}
 

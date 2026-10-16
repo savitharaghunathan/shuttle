@@ -50,10 +50,10 @@ func TestLoadDefaultsOpenPRCommand(t *testing.T) {
 	}
 }
 
-func TestEffectiveReadOnlyWorkerDefaultsToClaude(t *testing.T) {
-	cfg := &config.Config{}
-	if got := cfg.EffectiveReadOnlyWorker(); got != "claude" {
-		t.Fatalf("EffectiveReadOnlyWorker()=%q want claude", got)
+func TestEffectiveReadOnlyWorkerDefaultsToDefaultWorker(t *testing.T) {
+	cfg := &config.Config{DefaultWorker: "cursor"}
+	if got := cfg.EffectiveReadOnlyWorker(); got != "cursor" {
+		t.Fatalf("EffectiveReadOnlyWorker()=%q want cursor", got)
 	}
 }
 

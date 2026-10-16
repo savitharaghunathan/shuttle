@@ -78,6 +78,35 @@ func TestLoadArtifactBodies_ReviewGetsImplementAndTestLog(t *testing.T) {
 	}
 }
 
+func TestLoadArtifactBodies_ReviewEmptyTestLogStillRenders(t *testing.T) {
+	runDir := t.TempDir()
+	writeFile(t, filepath.Join(runDir, "artifacts", "implement", "summary"), "implement summary")
+	writeFile(t, filepath.Join(runDir, "logs", "test.log"), "")
+
+	pl := &Pipeline{
+		Stages: []Stage{
+			{ID: "implement"},
+			{ID: "test", DependsOn: []string{"implement"}},
+			{ID: "review", DependsOn: []string{"implement", "test"}},
+		},
+	}
+	bodies, err := loadArtifactBodies(runDir, "review", pl)
+	if err != nil {
+		t.Fatalf("loadArtifactBodies() = %v", err)
+	}
+	if _, ok := bodies["test"]; !ok {
+		t.Fatal("test key missing for empty test.log")
+	}
+	if bodies["test"] != "" {
+		t.Fatalf("test body = %q, want empty string", bodies["test"])
+	}
+
+	_, err = Render("## Test log tail\n{{.ArtifactBodies.test}}", RenderContext{ArtifactBodies: bodies})
+	if err != nil {
+		t.Fatalf("Render() = %v, want empty test log to render", err)
+	}
+}
+
 func TestLoadArtifactBodies_EmptyFileOmitted(t *testing.T) {
 	runDir := t.TempDir()
 	writeFile(t, filepath.Join(runDir, "artifacts", "spec"), "")

@@ -35,4 +35,7 @@ func TestWriteShuttleYAMLIfAbsentSetsOpenPRCommand(t *testing.T) {
 	if !reflect.DeepEqual(cfg.OpenPR.Command, want) {
 		t.Fatalf("OpenPR.Command=%v want %v", cfg.OpenPR.Command, want)
 	}
+	if cfg.ReadOnlyWorker != cfg.DefaultWorker || cfg.ReadOnlyWorker != "cursor" {
+		t.Fatalf("ReadOnlyWorker=%q DefaultWorker=%q want both cursor", cfg.ReadOnlyWorker, cfg.DefaultWorker)
+	}
 }

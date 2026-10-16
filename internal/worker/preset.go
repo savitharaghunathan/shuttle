@@ -38,6 +38,9 @@ func (w *PresetWorker) Execute(ctx context.Context, req Request) (Result, error)
 		}
 		args = append(args, rendered)
 	}
+	if req.ReadOnly {
+		args = dropYolo(args)
+	}
 
 	argv := make([]string, 0, 1+len(args))
 	argv = append(argv, w.preset.Bin)
@@ -47,6 +50,17 @@ func (w *PresetWorker) Execute(ctx context.Context, req Request) (Result, error)
 		return res, fmt.Errorf("worker %q: %w", w.name, err)
 	}
 	return res, nil
+}
+
+func dropYolo(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--yolo" {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func renderPresetArg(arg string, req Request) (string, error) {
