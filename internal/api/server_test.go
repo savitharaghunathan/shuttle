@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/api"
 	"github.com/savitharaghunathan/shuttle/internal/config"
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
+	"github.com/savitharaghunathan/shuttle/internal/registry"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
 	"github.com/savitharaghunathan/shuttle/internal/worker/workertest"
@@ -607,5 +609,245 @@ func TestRecoveryEndpointAmbiguousPrefix(t *testing.T) {
 	resp := env.post("/v1/runs/a1b2c3d4/resume", "")
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s want 400 ambiguous prefix", resp.Code, resp.Body.String())
+	}
+}
+
+func newParityTestEnv(t *testing.T, lookup func(string, string) (string, error), fetch func(context.Context, string, string, int) (string, error)) *recoveryTestEnv {
+	t.Helper()
+	t.Setenv("SHUTTLE_HOME", t.TempDir())
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "built"},
+	}))
+	cfg := &config.Config{
+		WorkRoot:       filepath.Join(dir, ".shuttle"),
+		Concurrency:    1,
+		DefaultWorker:  "fake",
+		DefaultTimeout: 5 * time.Minute,
+	}
+	eng := pipeline.NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+	eng.TemplateLoader = func(id string) (*pipeline.Pipeline, error) {
+		if id == "unknown" {
+			return nil, errors.New("template unknown not found")
+		}
+		return &pipeline.Pipeline{ID: id, Stages: []pipeline.Stage{{ID: "build"}}}, nil
+	}
+	return &recoveryTestEnv{
+		t:     t,
+		dir:   dir,
+		store: s,
+		reg:   reg,
+		handler: api.NewHandler(eng, api.Options{
+			CWD:         dir,
+			PipelineIDs: []string{"demo"},
+			LookupRepo:  lookup,
+			FetchSpec:   fetch,
+		}),
+	}
+}
+
+func writeSpecFile(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "spec.md")
+	if err := os.WriteFile(path, []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func decodeRun(t *testing.T, resp *httptest.ResponseRecorder) (id, templateID, cwd, runDir string) {
+	t.Helper()
+	var run struct {
+		ID         string `json:"id"`
+		TemplateID string `json:"template_id"`
+		CWD        string `json:"cwd"`
+		RunDir     string `json:"run_dir"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run: %v\n%s", err, resp.Body.String())
+	}
+	return run.ID, run.TemplateID, run.CWD, run.RunDir
+}
+
+func assertStatus(t *testing.T, resp *httptest.ResponseRecorder, want int, bodyContains string) {
+	t.Helper()
+	if resp.Code != want {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, want, resp.Body.String())
+	}
+	if bodyContains != "" && !strings.Contains(resp.Body.String(), bodyContains) {
+		t.Fatalf("body %s missing %q", resp.Body.String(), bodyContains)
+	}
+}
+
+func TestCreateRunRequiresSpecOrIssueForSDLC(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	assertStatus(t, env.post("/v1/runs", `{"template_id":"sdlc"}`), http.StatusBadRequest, "spec_path or issue_url is required for sdlc")
+}
+
+func TestCreateRunRejectsSpecAndIssueTogether(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	spec := writeSpecFile(t, env.dir)
+	body := `{"template_id":"sdlc","spec_path":"` + spec + `","issue_url":"https://github.com/acme/widget/issues/1"}`
+	assertStatus(t, env.post("/v1/runs", body), http.StatusBadRequest, "not both")
+}
+
+func TestCreateRunRejectsRelativeSpecPath(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	assertStatus(t, env.post("/v1/runs", `{"template_id":"sdlc","spec_path":"specs/x.md"}`), http.StatusBadRequest, "absolute")
+}
+
+func TestCreateRunHeadlessSwapsSDLC(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	spec := writeSpecFile(t, env.dir)
+	resp := env.post("/v1/runs", `{"template_id":"sdlc","headless":true,"spec_path":"`+spec+`"}`)
+	assertStatus(t, resp, http.StatusCreated, "")
+	if _, templateID, _, _ := decodeRun(t, resp); templateID != "sdlc-headless" {
+		t.Fatalf("template_id = %q, want sdlc-headless", templateID)
+	}
+}
+
+func TestCreateRunHeadlessAlreadyHeadlessIsNoop(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	spec := writeSpecFile(t, env.dir)
+	resp := env.post("/v1/runs", `{"template_id":"sdlc-headless","headless":true,"spec_path":"`+spec+`"}`)
+	assertStatus(t, resp, http.StatusCreated, "")
+	if _, templateID, _, _ := decodeRun(t, resp); templateID != "sdlc-headless" {
+		t.Fatalf("template_id = %q, want sdlc-headless", templateID)
+	}
+}
+
+func TestCreateRunHeadlessUnsupportedTemplate(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	assertStatus(t, env.post("/v1/runs", `{"template_id":"demo","headless":true}`), http.StatusBadRequest, "headless is not supported for template demo")
+}
+
+func TestCreateRunIssueURLFetchesSpecContent(t *testing.T) {
+	var servedDir string
+	env := newParityTestEnv(t,
+		func(string, string) (string, error) { return servedDir, nil },
+		func(context.Context, string, string, int) (string, error) { return "# Stub Issue\n\nbody\n", nil },
+	)
+	servedDir = env.dir
+
+	resp := env.post("/v1/runs", `{"template_id":"sdlc","issue_url":"https://github.com/acme/widget/issues/42","cwd":"/tmp/ignored"}`)
+	assertStatus(t, resp, http.StatusCreated, "")
+	_, _, cwd, runDir := decodeRun(t, resp)
+	if cwd != env.dir {
+		t.Fatalf("cwd = %q, want served dir %q (request cwd ignored on issue path)", cwd, env.dir)
+	}
+	spec, err := os.ReadFile(filepath.Join(runDir, "inputs", "spec.md"))
+	if err != nil {
+		t.Fatalf("read inputs/spec.md: %v", err)
+	}
+	if !strings.Contains(string(spec), "Stub Issue") {
+		t.Fatalf("inputs/spec.md = %q, want issue body", spec)
+	}
+}
+
+func TestCreateRunIssueForOtherRepoIs400(t *testing.T) {
+	other := t.TempDir()
+	fetched := false
+	env := newParityTestEnv(t,
+		func(string, string) (string, error) { return other, nil },
+		func(context.Context, string, string, int) (string, error) {
+			fetched = true
+			return "", errors.New("must not fetch")
+		},
+	)
+	resp := env.post("/v1/runs", `{"template_id":"sdlc","issue_url":"https://github.com/acme/widget/issues/42"}`)
+	assertStatus(t, resp, http.StatusBadRequest, "this server serves")
+	if fetched {
+		t.Fatal("issue fetched for a repo this server does not serve")
+	}
+}
+
+func TestCreateRunIssueUsesHomeRegistry(t *testing.T) {
+	env := newParityTestEnv(t, nil, func(context.Context, string, string, int) (string, error) {
+		return "# From registry\n", nil
+	})
+	reg, err := registry.Open(filepath.Join(os.Getenv("SHUTTLE_HOME"), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Upsert(registry.Repo{Owner: "acme", Name: "widget", URL: "https://github.com/acme/widget", Path: env.dir}); err != nil {
+		t.Fatal(err)
+	}
+	_ = reg.Close()
+
+	resp := env.post("/v1/runs", `{"template_id":"sdlc","issue_url":"https://github.com/acme/widget/issues/7"}`)
+	assertStatus(t, resp, http.StatusCreated, `"issue_ref":"acme/widget#7"`)
+
+	resp = env.post("/v1/runs", `{"template_id":"sdlc","issue_url":"https://github.com/acme/other/issues/7"}`)
+	assertStatus(t, resp, http.StatusBadRequest, "not imported")
+}
+
+func TestCreateRunIssueFetchFailureIs502(t *testing.T) {
+	var servedDir string
+	env := newParityTestEnv(t,
+		func(string, string) (string, error) { return servedDir, nil },
+		func(context.Context, string, string, int) (string, error) { return "", errors.New("gh: not logged in") },
+	)
+	servedDir = env.dir
+	resp := env.post("/v1/runs", `{"template_id":"sdlc","issue_url":"https://github.com/acme/widget/issues/42"}`)
+	assertStatus(t, resp, http.StatusBadGateway, "fetch issue")
+}
+
+func TestCreateRunMalformedIssueURLIs400(t *testing.T) {
+	env := newParityTestEnv(t, func(string, string) (string, error) { return "", nil }, nil)
+	assertStatus(t, env.post("/v1/runs", `{"template_id":"sdlc","issue_url":"not-a-url"}`), http.StatusBadRequest, "unsupported issue url")
+}
+
+func TestCreateRunUnknownTemplateIs400(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	assertStatus(t, env.post("/v1/runs", `{"template_id":"unknown"}`), http.StatusBadRequest, "not found")
+}
+
+func TestCreateRunDemoStillWorksWithoutSpec(t *testing.T) {
+	env := newParityTestEnv(t, nil, nil)
+	assertStatus(t, env.post("/v1/runs", `{"template_id":"demo"}`), http.StatusCreated, "")
+}
+
+func TestRunJSONIncludesOutputsMode(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
+		"plan": {Status: worker.StatusSucceeded, Summary: "planned"},
+	}))
+	cfg := &config.Config{WorkRoot: filepath.Join(dir, ".shuttle"), Concurrency: 1, DefaultWorker: "fake", DefaultTimeout: 5 * time.Minute}
+	eng := pipeline.NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+	eng.TemplateLoader = func(id string) (*pipeline.Pipeline, error) {
+		return &pipeline.Pipeline{ID: id, Stages: []pipeline.Stage{{ID: "plan", Outputs: []string{"summary"}}}}, nil
+	}
+	handler := api.NewHandler(eng, api.Options{CWD: dir})
+	env := &recoveryTestEnv{t: t, dir: dir, handler: handler, store: s, reg: reg}
+
+	spec := writeSpecFile(t, dir)
+	for template, want := range map[string]string{"sdlc": "strict", "custom": "bridge"} {
+		resp := env.post("/v1/runs", `{"template_id":"`+template+`","spec_path":"`+spec+`"}`)
+		assertStatus(t, resp, http.StatusCreated, `"outputs_mode":"`+want+`"`)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/runs", nil)
+	listResp := httptest.NewRecorder()
+	handler.ServeHTTP(listResp, listReq)
+	for _, want := range []string{`"outputs_mode":"strict"`, `"outputs_mode":"bridge"`} {
+		if !strings.Contains(listResp.Body.String(), want) {
+			t.Fatalf("list body %s missing %s", listResp.Body.String(), want)
+		}
 	}
 }

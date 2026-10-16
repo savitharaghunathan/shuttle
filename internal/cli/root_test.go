@@ -60,53 +60,37 @@ func TestRunRequiresSpecForSDLC(t *testing.T) {
 	}
 }
 
-func TestResolveTemplateID(t *testing.T) {
-	tests := []struct {
-		name     string
-		template string
-		headless bool
-		hasIssue bool
-		hasSpec  bool
-		want     string
-		wantErr  string
-	}{
-		{name: "default is gated pr-factory", hasSpec: true, want: "pr-factory"},
-		{name: "bare issue stays pr-factory-headless", hasIssue: true, want: "pr-factory-headless"},
-		{name: "bare headless stays pr-factory-headless", headless: true, hasSpec: true, want: "pr-factory-headless"},
-		{name: "headless swaps pr-factory", template: "pr-factory", headless: true, hasSpec: true, want: "pr-factory-headless"},
-		{name: "headless swaps sdlc", template: "sdlc", headless: true, hasSpec: true, want: "sdlc-headless"},
-		{name: "headless leaves sdlc-headless", template: "sdlc-headless", headless: true, hasSpec: true, want: "sdlc-headless"},
-		{name: "sdlc with issue", template: "sdlc", hasIssue: true, want: "sdlc"},
-		{name: "local overlay needs no spec", template: "sdlc-dry", want: "sdlc-dry"},
-		{name: "pipeline path needs no spec", template: "pipelines/sdlc-dry.yaml", want: "pipelines/sdlc-dry.yaml"},
+func TestRunHeadlessUnsupportedTemplate(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
 
-		{name: "pr-factory without input", template: "pr-factory", wantErr: "--spec is required for pr-factory"},
-		{name: "pr-factory-headless without input", template: "pr-factory-headless", wantErr: "--spec is required for pr-factory"},
-		{name: "headless without input", headless: true, wantErr: "--spec is required for pr-factory"},
-		{name: "sdlc without input", template: "sdlc", wantErr: "--spec is required for sdlc"},
-		{name: "sdlc-headless without input", template: "sdlc-headless", wantErr: "--spec is required for sdlc"},
-		{name: "spec and issue together", template: "sdlc", hasIssue: true, hasSpec: true, wantErr: "not both"},
+	var out, errOut bytes.Buffer
+	cmd := NewRootCommand(&out, &errOut)
+	cmd.SetArgs([]string{"run", "-t", "sdlc-dry", "--headless", "--spec", "spec.md"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("run --headless on sdlc-dry succeeded, want error")
 	}
+	if !strings.Contains(err.Error(), "--headless is not supported for template sdlc-dry") {
+		t.Fatalf("error=%v", err)
+	}
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveTemplateID(tc.template, tc.headless, tc.hasIssue, tc.hasSpec)
-			if tc.wantErr != "" {
-				if err == nil {
-					t.Fatalf("resolveTemplateID(%q) = %q, want error %q", tc.template, got, tc.wantErr)
-				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("resolveTemplateID(%q) error = %v, want %q", tc.template, err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("resolveTemplateID(%q) returned error: %v", tc.template, err)
-			}
-			if got != tc.want {
-				t.Fatalf("resolveTemplateID(%q) = %q, want %q", tc.template, got, tc.want)
-			}
-		})
+func TestRunRejectsSpecAndIssue(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	var out, errOut bytes.Buffer
+	cmd := NewRootCommand(&out, &errOut)
+	cmd.SetArgs([]string{"run", "-t", "sdlc", "--spec", "spec.md", "--issue", "https://github.com/acme/widget/issues/1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("run with --spec and --issue succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "use either --issue or --spec, not both") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

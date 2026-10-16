@@ -18,6 +18,7 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
 	"github.com/savitharaghunathan/shuttle/internal/registry"
+	"github.com/savitharaghunathan/shuttle/internal/runinput"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/templates"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
@@ -72,9 +73,9 @@ func newRunCommand(out io.Writer) *cobra.Command {
 		Use:   "run",
 		Short: "Start a pipeline run",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedTemplate, err := resolveTemplateID(templateID, headless, issueURL != "", specPath != "")
+			resolvedTemplate, err := runinput.ResolveTemplate(templateID, headless, issueURL != "", specPath != "")
 			if err != nil {
-				return err
+				return cliRunInputError(err)
 			}
 
 			pl, err := loadPipelineTemplate(resolvedTemplate)
@@ -82,7 +83,7 @@ func newRunCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 
-			cwd, specContent, issueRef, err := resolveRunInput(cmd.Context(), issueURL, specPath)
+			cwd, specContent, issueRef, err := resolveRunInput(cmd.Context(), issueURL)
 			if err != nil {
 				return err
 			}
@@ -122,40 +123,6 @@ func newRunCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "model for every agent stage (sdlc: plan, design, implement, review)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "skip manual gates for pr-factory/sdlc (selects headless template)")
 	return cmd
-}
-
-// resolveTemplateID applies template defaulting, the --headless swap, and input
-// validation. It is kept free of I/O so the selection matrix can be unit tested.
-func resolveTemplateID(templateID string, headless, hasIssue, hasSpec bool) (string, error) {
-	if hasIssue && hasSpec {
-		return "", fmt.Errorf("use either --issue or --spec, not both")
-	}
-
-	if templateID == "" {
-		if headless || hasIssue {
-			templateID = "pr-factory-headless"
-		} else {
-			templateID = "pr-factory"
-		}
-	}
-	if headless {
-		switch templateID {
-		case "pr-factory":
-			templateID = "pr-factory-headless"
-		case "sdlc":
-			templateID = "sdlc-headless"
-		}
-	}
-
-	if !hasIssue && !hasSpec {
-		switch templateID {
-		case "pr-factory", "pr-factory-headless":
-			return "", fmt.Errorf("--spec is required for pr-factory (or use --issue)")
-		case "sdlc", "sdlc-headless":
-			return "", fmt.Errorf("--spec is required for sdlc (or use --issue)")
-		}
-	}
-	return templateID, nil
 }
 
 func newStatusCommand(out io.Writer) *cobra.Command {
@@ -462,36 +429,50 @@ func loadConfigInDir(cwd string) (*config.Config, error) {
 	return nil, err
 }
 
-func resolveRunInput(ctx context.Context, issueURL, specPath string) (cwd, specContent, issueRef string, err error) {
-	if issueURL == "" {
-		cwd, err = os.Getwd()
-		return cwd, "", "", err
+// cliRunInputError rewrites runinput errors with the CLI's flag names.
+func cliRunInputError(err error) error {
+	var required *runinput.InputRequiredError
+	var unsupported *runinput.HeadlessUnsupportedError
+	switch {
+	case errors.Is(err, runinput.ErrSpecAndIssue):
+		return errors.New("use either --issue or --spec, not both")
+	case errors.As(err, &required):
+		return fmt.Errorf("--spec is required for %s (or use --issue)", required.Product)
+	case errors.As(err, &unsupported):
+		return fmt.Errorf("--headless is not supported for template %s (no headless variant)", unsupported.TemplateID)
+	default:
+		return err
 	}
+}
 
-	owner, name, number, err := issue.ParseIssueURL(issueURL)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	reg, err := openRegistry()
-	if err != nil {
-		return "", "", "", err
-	}
-	defer reg.Close()
-
-	entry, err := reg.Get(owner, name)
-	if err != nil {
-		if errors.Is(err, registry.ErrNotFound) {
-			return "", "", "", fmt.Errorf("repo %s/%s not imported; run: shuttle import repo https://github.com/%s/%s", owner, name, owner, name)
+func resolveRunInput(ctx context.Context, issueURL string) (cwd, specContent, issueRef string, err error) {
+	var reg *registry.Registry
+	defer func() {
+		if reg != nil {
+			_ = reg.Close()
 		}
-		return "", "", "", err
+	}()
+	opts := runinput.Options{
+		LookupRepo: func(owner, name string) (string, error) {
+			if reg == nil {
+				opened, err := openRegistry()
+				if err != nil {
+					return "", err
+				}
+				reg = opened
+			}
+			entry, err := reg.Get(owner, name)
+			if err != nil {
+				return "", err
+			}
+			return entry.Path, nil
+		},
 	}
-
-	specContent, err = issue.FetchSpec(ctx, owner, name, number)
+	in, err := runinput.ResolveInput(ctx, issueURL, opts)
 	if err != nil {
 		return "", "", "", err
 	}
-	return entry.Path, specContent, fmt.Sprintf("%s/%s#%d", owner, name, number), nil
+	return in.CWD, in.SpecContent, in.IssueRef, nil
 }
 
 func resolveRunArg(app *appContext, arg string) (string, error) {
@@ -670,20 +651,7 @@ func outputsMode(templateID string) string {
 	if err != nil {
 		return ""
 	}
-	declaresOutputs := false
-	for _, stage := range pl.Stages {
-		if len(stage.Outputs) > 0 {
-			declaresOutputs = true
-			break
-		}
-	}
-	if !declaresOutputs {
-		return ""
-	}
-	if pipeline.IsStrictOutputTemplate(templateID) {
-		return "strict"
-	}
-	return "bridge"
+	return pipeline.OutputsMode(templateID, pl)
 }
 
 func runBranch(s *store.Store, run store.Run) string {

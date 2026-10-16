@@ -18,7 +18,6 @@ BASE="${BASE:-http://127.0.0.1:8080}"
 ISSUE_URL="${ISSUE_URL:-https://github.com/savitharaghunathan/test/issues/2}"
 TEMPLATE="${TEMPLATE:-pr-factory-headless}"
 AGENT="${AGENT:-cursor}"
-ISSUE_SPEC="$TEST_APP/.shuttle/smoke-issue-spec.md"
 
 # savitharaghunathan/test#2 from default ISSUE_URL
 ISSUE_REF="${ISSUE_REF:-$(python3 -c "
@@ -38,7 +37,7 @@ json_status() {
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing $1"; exit 1; }; }
 need curl
 need python3
-need gh
+need gh   # shuttle serve fetches the issue body with gh
 
 if [[ ! -d "$TEST_APP" ]]; then
   echo "error: SHUTTLE_TEST_APP not found: $TEST_APP" >&2
@@ -49,42 +48,32 @@ if ! curl -sf "$BASE/v1/pipelines" >/dev/null 2>&1; then
   exit 1
 fi
 
-GH_REPO="${GH_REPO:-$(python3 -c "
-import os, re
-m = re.search(r'github\\.com/([^/]+/[^/]+)/issues/(\\d+)', os.environ['ISSUE_URL'])
-print(m.group(1) if m else '')
-" ISSUE_URL="$ISSUE_URL")}"
-ISSUE_NUM="${ISSUE_NUM:-$(python3 -c "
-import os, re
-m = re.search(r'github\\.com/[^/]+/[^/]+/issues/(\\d+)', os.environ['ISSUE_URL'])
-print(m.group(1) if m else '')
-" ISSUE_URL="$ISSUE_URL")}"
-
-mkdir -p "$TEST_APP/.shuttle"
-echo "Fetching issue spec from GitHub ($GH_REPO#$ISSUE_NUM)..."
-gh issue view "$ISSUE_NUM" --repo "$GH_REPO" --json title,body \
-  -q '"# " + .title + "\n\n" + .body' > "$ISSUE_SPEC"
-
 echo "test_app=$TEST_APP issue=$ISSUE_URL template=$TEMPLATE agent=$AGENT"
-echo "spec=$ISSUE_SPEC (gitignored under your test app)"
 echo "serve must run from $TEST_APP — use examples/scripts/serve-test-app.sh"
 echo
 
 echo "== 1. create run =="
-CREATE_BODY=$(TEMPLATE="$TEMPLATE" ISSUE_SPEC="$ISSUE_SPEC" TEST_APP="$TEST_APP" AGENT="$AGENT" ISSUE_URL="$ISSUE_URL" python3 <<'PY'
+echo "(requires $TEST_APP imported: cd $TEST_APP && $SHUTTLE_BIN import repo .)"
+CREATE_BODY=$(TEMPLATE="$TEMPLATE" AGENT="$AGENT" ISSUE_URL="$ISSUE_URL" python3 <<'PY'
 import json, os
 print(json.dumps({
     "template_id": os.environ["TEMPLATE"],
-    "spec_path": os.environ["ISSUE_SPEC"],
-    "cwd": os.environ["TEST_APP"],
     "agent": os.environ["AGENT"],
     "issue_url": os.environ["ISSUE_URL"],
 }))
 PY
 )
-CREATE=$(curl -s -X POST "$BASE/v1/runs" \
+CREATE=$(curl -s -w '\n%{http_code}' -X POST "$BASE/v1/runs" \
   -H 'Content-Type: application/json' \
   -d "$CREATE_BODY")
+CREATE_CODE="${CREATE##*$'\n'}"
+CREATE="${CREATE%$'\n'*}"
+if [[ "$CREATE_CODE" != "201" ]]; then
+  echo "ERROR: create returned HTTP $CREATE_CODE: $(printf '%s' "$CREATE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || printf '%s' "$CREATE")" >&2
+  echo "  The issue's repo must be imported at $TEST_APP (the dir shuttle serve runs in):" >&2
+  echo "  cd $TEST_APP && $SHUTTLE_BIN import repo ." >&2
+  exit 1
+fi
 echo "$CREATE" | python3 -m json.tool
 
 RUN_ID=$(printf '%s' "$CREATE" | json_field id)

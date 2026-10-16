@@ -1,31 +1,41 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/savitharaghunathan/shuttle/internal/issue"
+	"github.com/savitharaghunathan/shuttle/internal/home"
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
+	"github.com/savitharaghunathan/shuttle/internal/registry"
+	"github.com/savitharaghunathan/shuttle/internal/runinput"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 )
 
 type Options struct {
 	CWD         string
 	PipelineIDs []string
+	// LookupRepo and FetchSpec override the home registry and gh issue fetch.
+	// Leave nil in production.
+	LookupRepo func(owner, name string) (string, error)
+	FetchSpec  func(ctx context.Context, owner, name string, number int) (string, error)
 }
 
 type Server struct {
 	engine      *pipeline.Engine
 	cwd         string
 	pipelineIDs []string
+	lookupRepo  func(owner, name string) (string, error)
+	fetchSpec   func(ctx context.Context, owner, name string, number int) (string, error)
 }
 
 func NewHandler(engine *pipeline.Engine, opts Options) http.Handler {
@@ -33,6 +43,8 @@ func NewHandler(engine *pipeline.Engine, opts Options) http.Handler {
 		engine:      engine,
 		cwd:         opts.CWD,
 		pipelineIDs: append([]string(nil), opts.PipelineIDs...),
+		lookupRepo:  opts.LookupRepo,
+		fetchSpec:   opts.FetchSpec,
 	}
 
 	r := chi.NewRouter()
@@ -56,6 +68,7 @@ type createRunRequest struct {
 	Agent      string `json:"agent,omitempty"`
 	Model      string `json:"model,omitempty"`
 	IssueURL   string `json:"issue_url,omitempty"`
+	Headless   bool   `json:"headless,omitempty"`
 }
 
 type decisionRequest struct {
@@ -73,6 +86,7 @@ type runResponse struct {
 	Model       string          `json:"model,omitempty"`
 	IssueRef    string          `json:"issue_ref,omitempty"`
 	ParentRunID string          `json:"parent_run_id,omitempty"`
+	OutputsMode string          `json:"outputs_mode,omitempty"`
 	Stages      []stageResponse `json:"stages"`
 }
 
@@ -102,46 +116,47 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("template_id is required"))
 		return
 	}
+	if req.SpecPath != "" && !filepath.IsAbs(req.SpecPath) {
+		writeError(w, http.StatusBadRequest, errors.New("spec_path must be an absolute path"))
+		return
+	}
+	templateID, err := runinput.ResolveTemplate(req.TemplateID, req.Headless, req.IssueURL != "", req.SpecPath != "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if s.engine.TemplateLoader == nil {
 		writeError(w, http.StatusInternalServerError, errors.New("template loader is not configured"))
 		return
 	}
-
-	pl, err := s.engine.TemplateLoader(req.TemplateID)
+	pl, err := s.engine.TemplateLoader(templateID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 
-	cwd := req.CWD
-	if cwd == "" {
-		cwd = s.cwd
+	opts := runinput.Options{FallbackCWD: req.CWD, FetchSpec: s.fetchSpec}
+	if opts.FallbackCWD == "" {
+		opts.FallbackCWD = s.cwd
 	}
-	if cwd == "" {
-		cwd, err = os.Getwd()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-
-	// map optional metadata into StartParams (issue URL -> issue ref)
-	issueRef := ""
-	if req.IssueURL != "" {
-		owner, repo, num, err := issue.ParseIssueURL(req.IssueURL)
-		if err == nil {
-			issueRef = fmt.Sprintf("%s/%s#%d", owner, repo, num)
-		}
+	lookup, closeLookup := s.servedRepoLookup()
+	defer closeLookup()
+	opts.LookupRepo = lookup
+	in, err := runinput.ResolveInput(r.Context(), req.IssueURL, opts)
+	if err != nil {
+		writeError(w, inputErrorStatus(err), err)
+		return
 	}
 
 	runID, err := s.engine.StartRun(r.Context(), pipeline.StartParams{
-		TemplateID: req.TemplateID,
-		Pipeline:   pl,
-		CWD:        cwd,
-		SpecPath:   req.SpecPath,
-		Agent:      req.Agent,
-		Model:      req.Model,
-		IssueRef:   issueRef,
+		TemplateID:  templateID,
+		Pipeline:    pl,
+		CWD:         in.CWD,
+		SpecPath:    req.SpecPath,
+		SpecContent: in.SpecContent,
+		Agent:       req.Agent,
+		Model:       req.Model,
+		IssueRef:    in.IssueRef,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -152,6 +167,83 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeRun(w, http.StatusCreated, runID)
+}
+
+// servedRepoLookup returns a repo lookup for one request that only accepts the
+// repo this server was started in: the engine's config, DB, and work root all
+// belong to that repo. It runs before the issue fetch, so a mismatch never
+// calls gh. The home registry is opened on first use and closed by the
+// returned func.
+func (s *Server) servedRepoLookup() (func(owner, name string) (string, error), func()) {
+	var reg *registry.Registry
+	base := s.lookupRepo
+	if base == nil {
+		base = func(owner, name string) (string, error) {
+			if reg == nil {
+				if err := os.MkdirAll(home.Dir(), 0o755); err != nil {
+					return "", err
+				}
+				opened, err := registry.Open(home.RegistryDB())
+				if err != nil {
+					return "", err
+				}
+				reg = opened
+			}
+			entry, err := reg.Get(owner, name)
+			if err != nil {
+				return "", err
+			}
+			return entry.Path, nil
+		}
+	}
+	lookup := func(owner, name string) (string, error) {
+		path, err := base(owner, name)
+		if err != nil {
+			return "", err
+		}
+		served := s.cwd
+		if served == "" {
+			if served, err = os.Getwd(); err != nil {
+				return "", err
+			}
+		}
+		if !sameDir(path, served) {
+			return "", fmt.Errorf("issue repo %s/%s is imported at %s; this server serves %s (run shuttle serve from that repo)", owner, name, path, served)
+		}
+		return path, nil
+	}
+	closeFn := func() {
+		if reg != nil {
+			_ = reg.Close()
+		}
+	}
+	return lookup, closeFn
+}
+
+// sameDir compares by file identity so symlinks, /var vs /private/var, and
+// case-insensitive filesystems don't cause false mismatches.
+func sameDir(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	if errA == nil && errB == nil {
+		return os.SameFile(ai, bi)
+	}
+	return cleanAbs(a) == cleanAbs(b)
+}
+
+func cleanAbs(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
+}
+
+func inputErrorStatus(err error) int {
+	var fetchErr *runinput.FetchError
+	if errors.As(err, &fetchErr) {
+		return http.StatusBadGateway
+	}
+	return http.StatusBadRequest
 }
 
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +447,7 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 		UpdatedAt    string `json:"updated_at"`
 		WallDuration int64  `json:"wall_duration"`
 		CurrentStage string `json:"current_stage"`
+		OutputsMode  string `json:"outputs_mode,omitempty"`
 	}
 	cache := map[string]*pipeline.Pipeline{}
 	out := make([]any, 0, len(runs))
@@ -391,6 +484,7 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 				return int64(d.Seconds())
 			}()),
 			CurrentStage: cs,
+			OutputsMode:  pipeline.OutputsMode(run.TemplateID, pl),
 		})
 	}
 	return out
@@ -407,6 +501,12 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	outputsMode := ""
+	if s.engine.TemplateLoader != nil {
+		if pl, err := s.engine.TemplateLoader(run.TemplateID); err == nil {
+			outputsMode = pipeline.OutputsMode(run.TemplateID, pl)
+		}
+	}
 
 	resp := runResponse{
 		ID:          run.ID,
@@ -418,6 +518,7 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		Model:       run.Model,
 		IssueRef:    run.IssueRef,
 		ParentRunID: run.ParentRunID,
+		OutputsMode: outputsMode,
 		Stages:      make([]stageResponse, 0, len(stages)),
 	}
 	for _, stage := range stages {

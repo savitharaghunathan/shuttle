@@ -78,6 +78,29 @@ func IsStrictOutputTemplate(id string) bool {
 	}
 }
 
+// OutputsMode reports how declared stage outputs are enforced: "strict" fails a
+// stage that produced no artifact, "bridge" falls back to worker stdout. It
+// returns "" when the pipeline declares no outputs.
+func OutputsMode(templateID string, pl *Pipeline) string {
+	if pl == nil {
+		return ""
+	}
+	declaresOutputs := false
+	for _, stage := range pl.Stages {
+		if len(stage.Outputs) > 0 {
+			declaresOutputs = true
+			break
+		}
+	}
+	if !declaresOutputs {
+		return ""
+	}
+	if IsStrictOutputTemplate(templateID) {
+		return "strict"
+	}
+	return "bridge"
+}
+
 func shuttleStageEnv(runDir, stageID string) map[string]string {
 	return map[string]string{
 		"SHUTTLE_RUN_DIR":  runDir,

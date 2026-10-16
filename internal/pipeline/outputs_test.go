@@ -87,3 +87,25 @@ func TestShuttleStageEnv(t *testing.T) {
 		t.Fatalf("env has %d keys, want 2", len(env))
 	}
 }
+
+func TestOutputsMode(t *testing.T) {
+	withOutputs := &Pipeline{ID: "x", Stages: []Stage{{ID: "plan", Outputs: []string{"summary"}}}}
+	noOutputs := &Pipeline{ID: "y", Stages: []Stage{{ID: "build"}}}
+
+	tests := []struct {
+		id   string
+		pl   *Pipeline
+		want string
+	}{
+		{id: "sdlc", pl: withOutputs, want: "strict"},
+		{id: "sdlc-headless", pl: withOutputs, want: "strict"},
+		{id: "sdlc-dry", pl: withOutputs, want: "bridge"},
+		{id: "pr-factory", pl: noOutputs, want: ""},
+		{id: "sdlc", pl: nil, want: ""},
+	}
+	for _, tc := range tests {
+		if got := OutputsMode(tc.id, tc.pl); got != tc.want {
+			t.Fatalf("OutputsMode(%q) = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+}
