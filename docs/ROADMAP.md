@@ -21,7 +21,7 @@ Register a project once via clone (HTTPS/SSH) **or** point at an existing checko
 Built-in CLI adapters for Claude, Codex, Cursor, and OpenCode. Any agent defined in `shuttle.yaml` `workers:` is usable via `--agent`. Run-level `--agent` and `--model`; live progress streaming during runs.
 
 ### Developer ergonomics
-Dry-run pipelines, per-stage logs, `approve`/`reject` gates, and embedded templates (`pr-factory`, `pr-factory-headless`, `sdlc`).
+Dry-run pipelines, per-stage logs, `approve`/`reject` gates, and embedded templates (`pr-factory`, `pr-factory-headless`, `sdlc`, `sdlc-headless`).
 
 ### Runs view + recovery
 List and compare runs (agent, status, time, issue, stage) via `shuttle runs list` and `GET /v1/runs`. Resume failed/cancelled runs from the earliest failed stage; retry any terminal run against its frozen spec with optional agent/model overrides. Run metadata persists across sessions.
@@ -29,21 +29,21 @@ List and compare runs (agent, status, time, issue, stage) via `shuttle runs list
 ### Smarter PR lifecycle
 Deterministic feature branches per run (`shuttle/issue-N` for issues, `shuttle/run-<id>` for specs; spec retries inherit via `parent_run_id`). `implement` prompts pin the branch; post-implement compliance checks the remote ref. Idempotent `shuttle pr open` reuses an existing PR instead of failing on retry. Extended retry preflight warns on dirty tree, leftover branch, and open PR.
 
+### API / CLI run parity
+CLI `run` and `POST /v1/runs` share one create-run policy: headless template swap, spec-or-issue, issue body fetch into the run spec, served-repo check, and `outputs_mode` on run JSON. A dashboard can sit on the API without a second set of rules.
+
 ---
 
 ## Next
 
-### Zero-touch repo discovery
-**Goal:** `run --issue` can resolve and register a repo the first time, without a separate import step.
-
-Explicit import stays the default; auto-import is opt-in behavior for faster iteration.
+Items are in priority order. Do not start a later item until the one above it has moved to Shipped (or been explicitly re-ranked).
 
 ### Full SDLC pipeline
 **Goal:** Ship the embedded `sdlc` template as a first-class product path: plan → design → implement → test → review → approve → ship.
 
-Implementation complete on `feat/sdlc-pipeline`; mark Shipped after dogfood checklist.
+Implementation is on `main`. Mark Shipped after the dogfood checklist.
 
-Capabilities ready on the feature branch:
+Capabilities ready:
 
 - `sdlc` and `sdlc-headless` embedded templates with plan, design, implement, test, review, and ship stages.
 - Content injection for spec, upstream stage summaries, and review test-log tail, with a 128 KiB cap per injected body.
@@ -54,12 +54,19 @@ Capabilities ready on the feature branch:
 
 Dogfood checklist before moving to Shipped: run gated SDLC in a real repo with scaffolded `ship.command`, inspect plan/design/implement artifacts, approve `approve_ship`, confirm PR open is idempotent, and optionally run `sdlc-headless` on a throwaway spec.
 
+### Local web dashboard
+**Goal:** Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
+
+First build after SDLC dogfood. API / CLI run parity is the prerequisite; this is the surface that makes runs visible.
+
+### Zero-touch repo discovery
+**Goal:** `run --issue` can resolve and register a repo the first time, without a separate import step.
+
+Explicit import stays the default; auto-import is opt-in behavior for faster iteration.
+
 ---
 
 ## Future
-
-### Local web dashboard
-Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
 
 ### Remote workers
 Run agent stages on another machine or pool while keeping the control plane local.
@@ -84,6 +91,6 @@ Share and overlay pipeline templates across repos (`pipelines/` today is local-o
 
 | Change | Update here |
 |--------|-------------|
-| Feature shipped on `main` | Move from **Now** / **Next** → **Shipped** |
+| Feature shipped on `main` | Move from **Next** → **Shipped** |
 | New product idea | Add under **Next** or **Future** as a capability, not a task |
 | Ready to build | Write spec in `docs/superpowers/specs/`, plan in `docs/superpowers/plans/` |
