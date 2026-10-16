@@ -86,6 +86,7 @@ type runResponse struct {
 	Model       string          `json:"model,omitempty"`
 	IssueRef    string          `json:"issue_ref,omitempty"`
 	ParentRunID string          `json:"parent_run_id,omitempty"`
+	OutputsMode string          `json:"outputs_mode,omitempty"`
 	Stages      []stageResponse `json:"stages"`
 }
 
@@ -446,6 +447,7 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 		UpdatedAt    string `json:"updated_at"`
 		WallDuration int64  `json:"wall_duration"`
 		CurrentStage string `json:"current_stage"`
+		OutputsMode  string `json:"outputs_mode,omitempty"`
 	}
 	cache := map[string]*pipeline.Pipeline{}
 	out := make([]any, 0, len(runs))
@@ -482,6 +484,7 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 				return int64(d.Seconds())
 			}()),
 			CurrentStage: cs,
+			OutputsMode:  pipeline.OutputsMode(run.TemplateID, pl),
 		})
 	}
 	return out
@@ -498,6 +501,12 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	outputsMode := ""
+	if s.engine.TemplateLoader != nil {
+		if pl, err := s.engine.TemplateLoader(run.TemplateID); err == nil {
+			outputsMode = pipeline.OutputsMode(run.TemplateID, pl)
+		}
+	}
 
 	resp := runResponse{
 		ID:          run.ID,
@@ -509,6 +518,7 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		Model:       run.Model,
 		IssueRef:    run.IssueRef,
 		ParentRunID: run.ParentRunID,
+		OutputsMode: outputsMode,
 		Stages:      make([]stageResponse, 0, len(stages)),
 	}
 	for _, stage := range stages {

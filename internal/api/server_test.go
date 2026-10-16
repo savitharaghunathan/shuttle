@@ -814,3 +814,40 @@ func TestCreateRunDemoStillWorksWithoutSpec(t *testing.T) {
 	env := newParityTestEnv(t, nil, nil)
 	assertStatus(t, env.post("/v1/runs", `{"template_id":"demo"}`), http.StatusCreated, "")
 }
+
+func TestRunJSONIncludesOutputsMode(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "shuttle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	reg := worker.NewRegistry(nil)
+	reg.Register("fake", workertest.NewFakeWorker(map[string]worker.Result{
+		"plan": {Status: worker.StatusSucceeded, Summary: "planned"},
+	}))
+	cfg := &config.Config{WorkRoot: filepath.Join(dir, ".shuttle"), Concurrency: 1, DefaultWorker: "fake", DefaultTimeout: 5 * time.Minute}
+	eng := pipeline.NewEngine(s, reg, cfg)
+	eng.RetryBackoff = 0
+	eng.TemplateLoader = func(id string) (*pipeline.Pipeline, error) {
+		return &pipeline.Pipeline{ID: id, Stages: []pipeline.Stage{{ID: "plan", Outputs: []string{"summary"}}}}, nil
+	}
+	handler := api.NewHandler(eng, api.Options{CWD: dir})
+	env := &recoveryTestEnv{t: t, dir: dir, handler: handler, store: s, reg: reg}
+
+	spec := writeSpecFile(t, dir)
+	for template, want := range map[string]string{"sdlc": "strict", "custom": "bridge"} {
+		resp := env.post("/v1/runs", `{"template_id":"`+template+`","spec_path":"`+spec+`"}`)
+		assertStatus(t, resp, http.StatusCreated, `"outputs_mode":"`+want+`"`)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/runs", nil)
+	listResp := httptest.NewRecorder()
+	handler.ServeHTTP(listResp, listReq)
+	for _, want := range []string{`"outputs_mode":"strict"`, `"outputs_mode":"bridge"`} {
+		if !strings.Contains(listResp.Body.String(), want) {
+			t.Fatalf("list body %s missing %s", listResp.Body.String(), want)
+		}
+	}
+}

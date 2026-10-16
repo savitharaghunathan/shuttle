@@ -651,20 +651,7 @@ func outputsMode(templateID string) string {
 	if err != nil {
 		return ""
 	}
-	declaresOutputs := false
-	for _, stage := range pl.Stages {
-		if len(stage.Outputs) > 0 {
-			declaresOutputs = true
-			break
-		}
-	}
-	if !declaresOutputs {
-		return ""
-	}
-	if pipeline.IsStrictOutputTemplate(templateID) {
-		return "strict"
-	}
-	return "bridge"
+	return pipeline.OutputsMode(templateID, pl)
 }
 
 func runBranch(s *store.Store, run store.Run) string {
