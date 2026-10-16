@@ -106,7 +106,7 @@ shuttle run -t sdlc --issue https://github.com/org/repo/issues/42
 shuttle run -t sdlc --spec specs/feature.md --headless
 ```
 
-`sdlc` runs `plan` → `design` → `implement` → `test` → `review` → `approve_ship` → `ship`. `sdlc-headless` skips `approve_ship`; `--headless -t sdlc` selects `sdlc-headless`. Bare `run --issue --headless` still selects `pr-factory-headless`, not SDLC.
+`sdlc` runs `plan` → `design` → `implement` → `test` → `review` → `approve_ship` → `ship`. `sdlc-headless` skips `approve_ship`; `--headless -t sdlc` selects `sdlc-headless`. Bare `run --issue --headless` still selects `pr-factory-headless`, not SDLC. `--headless` on a template with no headless variant (for example a local overlay) is an error rather than a silent gated run.
 
 `pr-factory` is the fast issue-to-PR path: intake, implement, test, and open a PR. `sdlc` is the fuller factory path: it injects the spec or issue body into `plan`, injects upstream artifact content into each later prompt, and persists stage outputs under `.shuttle/runs/<run-id>/artifacts/<stage-id>/summary`. Prompts receive artifact **content**, not just artifact paths, so stdout-only agents can participate. Each injected artifact body is capped at 128 KiB.
 
@@ -248,6 +248,14 @@ shuttle cancel <run-id>
 `status` reports `outputs: strict` for the embedded `sdlc` templates and `outputs: bridge` for overlays that declare stage outputs without strict enforcement, so a local `pipelines/sdlc-*.yaml` run is distinguishable from a real one.
 
 `shuttle serve` starts an unauthenticated local HTTP API on `127.0.0.1:8080`. Treat it as local-only.
+
+`POST /v1/runs` follows the same rules as `shuttle run`:
+
+- `template_id` is required. `"headless": true` swaps `pr-factory` / `sdlc` to their headless templates; already-headless ids are unchanged, and templates with no headless variant are rejected.
+- `pr-factory` and `sdlc` (and their headless variants) need exactly one of `spec_path` (absolute path) or `issue_url`.
+- `issue_url` fetches the issue body into the run spec, for any template; it is no longer just a label. The issue's repo must be imported at the directory `shuttle serve` runs in; the request `cwd` is ignored for issue runs. Any fetch failure, including an issue that doesn't exist, returns 502 with `gh`'s error.
+
+Run JSON includes `outputs_mode` (`strict` or `bridge`) when the template declares stage outputs.
 
 ## Trust boundary
 
