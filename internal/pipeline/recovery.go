@@ -8,7 +8,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 )
 
@@ -287,26 +286,6 @@ func (e *Engine) RetryRun(ctx context.Context, runID string, p RetryParams) (Ret
 		}
 	}
 
-	branch, err := issue.ResolveBranch(
-		parent.IssueRef,
-		parent.ID,
-		parent.ParentRunID,
-		func(id string) (string, string, string, error) {
-			pr, err := e.Store.GetRun(id)
-			if err != nil {
-				return "", "", "", err
-			}
-			return pr.IssueRef, pr.ID, pr.ParentRunID, nil
-		},
-	)
-	if err != nil {
-		return RetryResult{}, fmt.Errorf("resolve branch: %w", err)
-	}
-	warnings := gitPreflight(parent.CWD, branch)
-	if parent.TemplateID == "sdlc" || parent.TemplateID == "sdlc-headless" {
-		warnings = append(warnings, "retry starts a new run; plan/design artifacts are not copied from the parent run")
-	}
-
 	newID, err := e.StartRun(ctx, StartParams{
 		TemplateID:  parent.TemplateID,
 		Pipeline:    pl,
@@ -319,6 +298,10 @@ func (e *Engine) RetryRun(ctx context.Context, runID string, p RetryParams) (Ret
 	})
 	if err != nil {
 		return RetryResult{}, err
+	}
+	warnings := e.StartWarnings(newID)
+	if parent.TemplateID == "sdlc" || parent.TemplateID == "sdlc-headless" {
+		warnings = append(warnings, "retry starts a new run; plan/design artifacts are not copied from the parent run")
 	}
 	if err := e.RunUntilBlockOrDone(ctx, newID); err != nil {
 		return RetryResult{RunID: newID, Warnings: warnings}, err

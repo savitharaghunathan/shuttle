@@ -896,6 +896,38 @@ func TestPersistedAgentRestoredOnFreshEngine(t *testing.T) {
 	}
 }
 
+func TestReadOnlyWorkerDefaultsToDefaultWorker(t *testing.T) {
+	eng, dir := newTestEngine(t, nil)
+	eng.Cfg.DefaultWorker = "cursor"
+	eng.Cfg.ReadOnlyWorker = ""
+
+	p := &Pipeline{
+		ID: "readonly-inherit",
+		Stages: []Stage{
+			{ID: "plan", ReadOnly: true},
+			{ID: "implement", DependsOn: []string{"plan"}},
+		},
+	}
+
+	runID, err := eng.StartRun(context.Background(), StartParams{
+		TemplateID: "readonly-inherit",
+		Pipeline:   p,
+		CWD:        dir,
+		Agent:      "cursor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sm := stageMap(t, eng, runID)
+	if sm["plan"].Worker != "cursor" {
+		t.Fatalf("plan worker=%q want cursor", sm["plan"].Worker)
+	}
+	if sm["implement"].Worker != "cursor" {
+		t.Fatalf("implement worker=%q want cursor", sm["implement"].Worker)
+	}
+}
+
 func TestAgentOverrideSkipsReadOnlyStages(t *testing.T) {
 	eng, dir := newTestEngine(t, nil)
 	eng.Cfg.DefaultWorker = "cursor"
@@ -1253,11 +1285,10 @@ func TestSDLCMissingArtifactFails(t *testing.T) {
 	}
 }
 
-func TestShipGuardFailsOnScaffoldEcho(t *testing.T) {
+func TestStartRunFailsOnScaffoldEchoShip(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{
 		"ship": {Status: worker.StatusSucceeded, Summary: "should not run"},
 	})
-	eng.Cfg.Concurrency = 1
 
 	p := &Pipeline{
 		ID: "sdlc",
@@ -1266,78 +1297,69 @@ func TestShipGuardFailsOnScaffoldEcho(t *testing.T) {
 			Command: []string{"echo", "ship skipped"},
 		}},
 	}
-	ctx := context.Background()
-	runID, err := eng.StartRun(ctx, StartParams{
+	_, err := eng.StartRun(context.Background(), StartParams{
 		TemplateID: "sdlc",
 		Pipeline:   p,
 		CWD:        dir,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("StartRun() = nil, want non-production ship command error")
 	}
-	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(err.Error(), "non-production ship command is not allowed for sdlc") {
+		t.Fatalf("StartRun() = %v, want non-production ship command error", err)
 	}
-
-	run, err := eng.Store.GetRun(runID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if run.Status != store.RunStatusFailed {
-		t.Fatalf("run status=%q want failed", run.Status)
-	}
-	sm := stageMap(t, eng, runID)
-	if sm["ship"].Status != store.StageStatusFailed {
-		t.Fatalf("ship status=%q want failed", sm["ship"].Status)
-	}
-	if sm["ship"].Attempt != 0 {
-		t.Fatalf("ship attempt=%d want 0", sm["ship"].Attempt)
-	}
-	if sm["ship"].Summary == nil || !strings.Contains(*sm["ship"].Summary, "non-production ship command") {
-		t.Fatalf("ship summary=%v, want non-production ship command error", sm["ship"].Summary)
+	if !strings.Contains(err.Error(), "{{.ShuttleBin}}") {
+		t.Fatalf("StartRun() = %v, want migration snippet", err)
 	}
 }
 
-func TestShipGuardFailsOnLoadDefaultsEcho(t *testing.T) {
+func TestStartRunFailsOnLoadDefaultsEchoShip(t *testing.T) {
 	eng, dir := newTestEngine(t, map[string]worker.Result{
 		"ship": {Status: worker.StatusSucceeded, Summary: "should not run"},
 	})
-	eng.Cfg.Concurrency = 1
 	eng.Cfg.Ship.Command = config.LoadDefaults().Ship.Command
 
 	p := &Pipeline{
 		ID:     "sdlc",
 		Stages: []Stage{{ID: "ship"}},
 	}
-	ctx := context.Background()
-	runID, err := eng.StartRun(ctx, StartParams{
+	_, err := eng.StartRun(context.Background(), StartParams{
 		TemplateID: "sdlc",
 		Pipeline:   p,
 		CWD:        dir,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("StartRun() = nil, want non-production ship command error")
 	}
-	if err := eng.RunUntilBlockOrDone(ctx, runID); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(err.Error(), "non-production ship command is not allowed for sdlc") {
+		t.Fatalf("StartRun() = %v, want non-production ship command error", err)
+	}
+}
+
+func TestStartRunRecordsGitPreflightWarnings(t *testing.T) {
+	orig := gitPreflight
+	t.Cleanup(func() { gitPreflight = orig })
+	var gotBranch string
+	gitPreflight = func(cwd, branch string) []string {
+		gotBranch = branch
+		return []string{"on non-default branch feat/leftover"}
 	}
 
-	run, err := eng.Store.GetRun(runID)
+	eng, dir := newTestEngine(t, nil)
+	runID, err := eng.StartRun(context.Background(), StartParams{
+		TemplateID: "t",
+		Pipeline:   &Pipeline{ID: "t", Stages: []Stage{{ID: "build"}}},
+		CWD:        dir,
+		IssueRef:   "org/repo#42",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != store.RunStatusFailed {
-		t.Fatalf("run status=%q want failed", run.Status)
+	if gotBranch != "shuttle/issue-42" {
+		t.Fatalf("preflight branch=%q want shuttle/issue-42", gotBranch)
 	}
-	sm := stageMap(t, eng, runID)
-	if sm["ship"].Status != store.StageStatusFailed {
-		t.Fatalf("ship status=%q want failed", sm["ship"].Status)
-	}
-	if sm["ship"].Attempt != 0 {
-		t.Fatalf("ship attempt=%d want 0", sm["ship"].Attempt)
-	}
-	if sm["ship"].Summary == nil || !strings.Contains(*sm["ship"].Summary, "non-production ship command") {
-		t.Fatalf("ship summary=%v, want non-production ship command error", sm["ship"].Summary)
+	if !containsWarning(eng.StartWarnings(runID), "on non-default branch feat/leftover") {
+		t.Fatalf("StartWarnings=%v, want leftover-branch warning", eng.StartWarnings(runID))
 	}
 }
 

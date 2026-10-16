@@ -138,6 +138,9 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 
 	// Resolve pipeline defaults and the resolved agent before persisting the run.
 	pl := e.applyDefaults(p.Pipeline, p.Agent)
+	if err := rejectNonProductionShip(p.TemplateID, pl); err != nil {
+		return "", err
+	}
 
 	resolvedAgent := p.Agent
 	if resolvedAgent == "" {
@@ -154,6 +157,15 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 	startWarnings, err := e.concurrentIssueWarnings(p.IssueRef)
 	if err != nil {
 		return "", err
+	}
+	if branch, err := issue.ResolveBranch(p.IssueRef, runID, p.ParentRunID, func(id string) (string, string, string, error) {
+		pr, err := e.Store.GetRun(id)
+		if err != nil {
+			return "", "", "", err
+		}
+		return pr.IssueRef, pr.ID, pr.ParentRunID, nil
+	}); err == nil {
+		startWarnings = append(startWarnings, gitPreflight(p.CWD, branch)...)
 	}
 
 	if err := e.Store.CreateRun(store.Run{
@@ -478,6 +490,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			Command:  renderedCmd,
 			Agent:    opts.Agent,
 			Model:    opts.Model,
+			ReadOnly: stageDef != nil && stageDef.ReadOnly,
 			Output:   e.Progress,
 			LogPath:  filepath.Join(run.RunDir, "logs", sid+".log"),
 			Env:      shuttleStageEnv(run.RunDir, sid),
@@ -769,6 +782,18 @@ func (e *Engine) applyDefaults(p *Pipeline, agentOverride string) *Pipeline {
 	}
 
 	return pl
+}
+
+func rejectNonProductionShip(templateID string, pl *Pipeline) error {
+	if !IsStrictOutputTemplate(templateID) || pl == nil {
+		return nil
+	}
+	for _, stage := range pl.Stages {
+		if stage.ID == "ship" && config.IsNonProductionShipCommand(stage.Command) {
+			return fmt.Errorf("non-production ship command is not allowed for %s\n\nUpdate ship.command:\n  ship:\n    command: [\"{{.ShuttleBin}}\", \"pr\", \"open\", \"--branch\", \"{{.Branch}}\", \"--issue\", \"{{.IssueRef}}\"]", templateID)
+		}
+	}
+	return nil
 }
 
 func (e *Engine) skipRemaining(runID string) error {

@@ -145,10 +145,10 @@ func IsNonProductionShipCommand(cmd []string) bool {
 }
 
 func (c *Config) EffectiveReadOnlyWorker() string {
-	if c.ReadOnlyWorker == "" {
-		return "claude"
+	if c.ReadOnlyWorker != "" {
+		return c.ReadOnlyWorker
 	}
-	return c.ReadOnlyWorker
+	return c.DefaultWorker
 }
 
 func DefaultWorkerPresets() map[string]WorkerPreset {

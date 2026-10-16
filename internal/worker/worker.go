@@ -28,6 +28,7 @@ type Request struct {
 	Timeout  time.Duration
 	Agent    string
 	Model    string
+	ReadOnly bool
 	Output   io.Writer
 	LogPath  string
 }

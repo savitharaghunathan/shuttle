@@ -87,6 +87,7 @@ type runResponse struct {
 	IssueRef    string          `json:"issue_ref,omitempty"`
 	ParentRunID string          `json:"parent_run_id,omitempty"`
 	OutputsMode string          `json:"outputs_mode,omitempty"`
+	Warnings    []string        `json:"warnings,omitempty"`
 	Stages      []stageResponse `json:"stages"`
 }
 
@@ -519,6 +520,7 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		IssueRef:    run.IssueRef,
 		ParentRunID: run.ParentRunID,
 		OutputsMode: outputsMode,
+		Warnings:    s.engine.StartWarnings(runID),
 		Stages:      make([]stageResponse, 0, len(stages)),
 	}
 	for _, stage := range stages {

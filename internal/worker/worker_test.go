@@ -241,6 +241,42 @@ func TestRegistryRegistersCustomWorkerFromConfig(t *testing.T) {
 	}
 }
 
+func TestPresetExecuteDropsYoloWhenReadOnly(t *testing.T) {
+	w := worker.NewPresetWorker("cursor", config.WorkerPreset{
+		Bin: "/bin/sh",
+		Args: []string{
+			"-c",
+			"printf 'args:%s' \"$*\"",
+			"sh",
+			"--trust",
+			"--yolo",
+			"{{.Prompt}}",
+		},
+	})
+
+	res, err := w.Execute(context.Background(), worker.Request{Prompt: "plan it", ReadOnly: true})
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	if res.Status != worker.StatusSucceeded {
+		t.Fatalf("Status = %q, want %q", res.Status, worker.StatusSucceeded)
+	}
+	if strings.Contains(res.Summary, "--yolo") {
+		t.Fatalf("Summary = %q, want --yolo dropped on readonly", res.Summary)
+	}
+	if !strings.Contains(res.Summary, "--trust") {
+		t.Fatalf("Summary = %q, want --trust kept", res.Summary)
+	}
+
+	res, err = w.Execute(context.Background(), worker.Request{Prompt: "implement it"})
+	if err != nil {
+		t.Fatalf("Execute(write) = %v", err)
+	}
+	if !strings.Contains(res.Summary, "--yolo") {
+		t.Fatalf("Summary = %q, want --yolo kept when not readonly", res.Summary)
+	}
+}
+
 func TestPresetExecuteOmitsEmptyModelArgs(t *testing.T) {
 	w := worker.NewPresetWorker("claude", config.WorkerPreset{
 		Bin: "/bin/sh",

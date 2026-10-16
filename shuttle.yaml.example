@@ -1,4 +1,5 @@
 default_worker: claude
+readonly_worker: claude
 work_root: .shuttle
 concurrency: 2
 default_timeout: 30m
