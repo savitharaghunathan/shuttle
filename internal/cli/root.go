@@ -83,7 +83,7 @@ func newRunCommand(out io.Writer) *cobra.Command {
 				return err
 			}
 
-			cwd, specContent, issueRef, err := resolveRunInput(cmd.Context(), issueURL, specPath)
+			cwd, specContent, issueRef, err := resolveRunInput(cmd.Context(), issueURL)
 			if err != nil {
 				return err
 			}
@@ -445,36 +445,34 @@ func cliRunInputError(err error) error {
 	}
 }
 
-func resolveRunInput(ctx context.Context, issueURL, specPath string) (cwd, specContent, issueRef string, err error) {
-	if issueURL == "" {
-		cwd, err = os.Getwd()
-		return cwd, "", "", err
-	}
-
-	owner, name, number, err := issue.ParseIssueURL(issueURL)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	reg, err := openRegistry()
-	if err != nil {
-		return "", "", "", err
-	}
-	defer reg.Close()
-
-	entry, err := reg.Get(owner, name)
-	if err != nil {
-		if errors.Is(err, registry.ErrNotFound) {
-			return "", "", "", fmt.Errorf("repo %s/%s not imported; run: shuttle import repo https://github.com/%s/%s", owner, name, owner, name)
+func resolveRunInput(ctx context.Context, issueURL string) (cwd, specContent, issueRef string, err error) {
+	var reg *registry.Registry
+	defer func() {
+		if reg != nil {
+			_ = reg.Close()
 		}
-		return "", "", "", err
+	}()
+	opts := runinput.Options{
+		LookupRepo: func(owner, name string) (string, error) {
+			if reg == nil {
+				opened, err := openRegistry()
+				if err != nil {
+					return "", err
+				}
+				reg = opened
+			}
+			entry, err := reg.Get(owner, name)
+			if err != nil {
+				return "", err
+			}
+			return entry.Path, nil
+		},
 	}
-
-	specContent, err = issue.FetchSpec(ctx, owner, name, number)
+	in, err := runinput.ResolveInput(ctx, issueURL, opts)
 	if err != nil {
 		return "", "", "", err
 	}
-	return entry.Path, specContent, fmt.Sprintf("%s/%s#%d", owner, name, number), nil
+	return in.CWD, in.SpecContent, in.IssueRef, nil
 }
 
 func resolveRunArg(app *appContext, arg string) (string, error) {
