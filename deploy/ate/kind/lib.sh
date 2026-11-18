@@ -14,9 +14,11 @@ export KUBECTL_CONTEXT="kind-${KIND_CLUSTER_NAME}"
 export ATE_SRC="${ATE_SRC:-${HOME}/.cache/shuttle/agent-substrate}"
 export ATE_REF="${ATE_REF:-v1.0.0}"
 export ATE_INSTALL_KIND=true
-export KO_DOCKER_REPO="${KO_DOCKER_REPO:-localhost:${KIND_REGISTRY_PORT}}"
-export SHUTTLE_ACTOR_IMAGE="${SHUTTLE_ACTOR_IMAGE:-${KO_DOCKER_REPO}/shuttle-claude-actor:latest}"
-export SHUTTLE_SMOKE_IMAGE="${SHUTTLE_SMOKE_IMAGE:-${KO_DOCKER_REPO}/shuttle-smoke-actor:latest}"
+# Kind nodes pull via the localhost:PORT containerd mirror. Never use 127.0.0.1
+# here — inside a node that address is the node itself, not the registry.
+export KO_DOCKER_REPO="localhost:${KIND_REGISTRY_PORT}"
+export SHUTTLE_ACTOR_IMAGE="${KO_DOCKER_REPO}/shuttle-claude-actor:latest"
+export SHUTTLE_SMOKE_IMAGE="${KO_DOCKER_REPO}/shuttle-smoke-actor:latest"
 export ATE_ATESPACE="${ATE_ATESPACE:-shuttle}"
 export ATE_TEMPLATE="${ATE_TEMPLATE:-shuttle-claude}"
 export ATE_SMOKE_TEMPLATE="${ATE_SMOKE_TEMPLATE:-shuttle-smoke}"
