@@ -44,6 +44,9 @@ make test-unit          # unit tests (fast; no integration tag)
 make test-integration   # CLI pipeline integration tests
 make test               # unit + integration
 make verify             # build + test
+make ate-kind-up        # local kind+podman ate cluster for --remote
+make ate-kind-smoke     # smoke actor task (needs SMOKE_REPO_URL)
+make ate-kind-clean     # remove ate kind cluster and local test state
 ```
 
 ## Import repos
@@ -136,6 +139,12 @@ test:
   command: ["go", "test", "./..."]
 open_pr:
   command: ["{{.ShuttleBin}}", "pr", "open", "--branch", "{{.Branch}}", "--issue", "{{.IssueRef}}"]
+# ate:   # uncomment for --remote; see “Remote workers” below
+#   endpoint: "127.0.0.1:8443"
+#   atespace: shuttle
+#   actor_template: shuttle-claude
+#   task_url: "http://127.0.0.1:8000"
+#   insecure: true
 workers:
   cursor:
     bin: cursor-agent
@@ -151,6 +160,56 @@ workers:
 Built-in agent presets: `claude`, `codex`, `opencode`, `cursor`. Add any other agent under `workers:` in `shuttle.yaml` and use `--agent <name>` — no code change required. List registered workers with `shuttle workers`. Also: `intake`, `shell`, `exec`, `manual`.
 
 Sharp edge: repo-mutating presets such as `cursor` with `--yolo` should not be used for SDLC read-only stages. The embedded templates mark those stages `readonly: true`; if a local pipeline overlay sets `worker: cursor` on them, that overlay is choosing to give the agent write access.
+
+## Remote workers (Agent Substrate)
+
+By default, agent stages run as local CLIs. With **`--remote`**, those stages run on [Agent Substrate](https://ate.dev) (ate) sandboxed actors instead. The shuttle control plane, SQLite run DB, and local stages (`intake`, `test`, `open_pr`, `ship`, gates) stay on your machine.
+
+```bash
+shuttle run --issue https://github.com/org/repo/issues/42 \
+            --agent claude \
+            --remote \
+            --headless
+```
+
+### Behavior
+
+| | Local (default) | `--remote` |
+|---|---|---|
+| Agent stages | CLI presets (`claude`, `cursor`, …) | ate sticky actors |
+| `test` / `open_pr` / gates | local | local |
+| Unsupported `--agent` | — | hard error (v1: **`claude` only**) |
+| ate / sync failure | — | stage fails (no local CLI fallback) |
+
+After a remote agent stage succeeds, shuttle **fetches and checks out** the run branch into the registered repo before `test` / `open_pr`. Sync failure fails the run.
+
+### Config (`ate:` in `shuttle.yaml`)
+
+```yaml
+ate:
+  endpoint: "127.0.0.1:8443"           # ate-api-server gRPC (often a port-forward)
+  atespace: shuttle
+  actor_template: shuttle-claude       # pre-created ActorTemplate name
+  task_url: "http://127.0.0.1:8000"  # actor HTTP task API (router / kubectl ate proxy)
+  token_file: ""                       # optional bearer token path
+  insecure: true                       # local kind TLS skip
+```
+
+`--remote` requires a complete `ate:` block. HTTP API: `"remote": true` on `POST /v1/runs` (same rules).
+
+### Cluster / images
+
+Shuttle does not install ate. Provision a cluster (kind or GKE), build the actor image from `deploy/ate/workload/Containerfile`, and create the ActorTemplate. Local kind+podman helpers:
+
+```bash
+make ate-kind-up
+cp deploy/ate/kind/smoke.env.example deploy/ate/kind/smoke.env
+# set SMOKE_REPO_URL=https://github.com/OWNER/REPO.git
+make ate-kind-smoke
+make ate-kind-clean
+```
+
+Details: [`deploy/ate/README.md`](deploy/ate/README.md), [`deploy/ate/kind/README.md`](deploy/ate/kind/README.md), design [`docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md`](docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md).
 
 ## Branch and PR lifecycle
 

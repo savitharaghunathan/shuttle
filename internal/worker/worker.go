@@ -31,6 +31,8 @@ type Request struct {
 	ReadOnly bool
 	Output   io.Writer
 	LogPath  string
+	Branch   string
+	RepoURL  string
 }
 
 type Result struct {

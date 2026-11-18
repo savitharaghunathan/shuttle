@@ -14,9 +14,12 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/artifact"
 	"github.com/savitharaghunathan/shuttle/internal/config"
 	"github.com/savitharaghunathan/shuttle/internal/issue"
+	"github.com/savitharaghunathan/shuttle/internal/repo"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
 )
+
+var originRemoteURL = repo.OriginRemoteURL
 
 type StartParams struct {
 	TemplateID  string
@@ -28,6 +31,7 @@ type StartParams struct {
 	Model       string
 	IssueRef    string
 	ParentRunID string
+	Remote      bool
 }
 
 type Engine struct {
@@ -54,8 +58,9 @@ type Engine struct {
 }
 
 type runOptions struct {
-	Agent string
-	Model string
+	Agent  string
+	Model  string
+	Remote bool
 }
 
 func NewEngine(s *store.Store, reg *worker.Registry, cfg *config.Config) *Engine {
@@ -109,7 +114,7 @@ func (e *Engine) EnsurePipeline(runID string) error {
 		e.specPaths[runID] = specPath
 	}
 	// restore run options (agent/model) from the DB so fresh engines use the same settings
-	e.runOpts[runID] = runOptions{Agent: run.Agent, Model: run.Model}
+	e.runOpts[runID] = runOptions{Agent: run.Agent, Model: run.Model, Remote: run.Remote}
 	e.mu.Unlock()
 	return nil
 }
@@ -117,6 +122,20 @@ func (e *Engine) EnsurePipeline(runID string) error {
 func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 	if err := Validate(p.Pipeline); err != nil {
 		return "", fmt.Errorf("validate pipeline: %w", err)
+	}
+	if p.Remote {
+		agent := p.Agent
+		if agent == "" && e.Cfg != nil {
+			agent = e.Cfg.DefaultWorker
+		}
+		if err := worker.ValidateRemoteAgent(agent); err != nil {
+			return "", err
+		}
+		if e.Cfg != nil {
+			if err := e.Cfg.Ate.Validate(); err != nil {
+				return "", fmt.Errorf("remote mode: %w", err)
+			}
+		}
 	}
 
 	runID := uuid.New().String()
@@ -178,6 +197,7 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 		Model:       p.Model,
 		IssueRef:    p.IssueRef,
 		ParentRunID: p.ParentRunID,
+		Remote:      p.Remote,
 	}); err != nil {
 		return "", fmt.Errorf("create run: %w", err)
 	}
@@ -221,7 +241,7 @@ func (e *Engine) StartRun(ctx context.Context, p StartParams) (string, error) {
 	if p.SpecPath != "" {
 		e.specPaths[runID] = p.SpecPath
 	}
-	e.runOpts[runID] = runOptions{Agent: resolvedAgent, Model: p.Model}
+	e.runOpts[runID] = runOptions{Agent: resolvedAgent, Model: p.Model, Remote: p.Remote}
 	if len(startWarnings) > 0 {
 		e.startWarn[runID] = append([]string(nil), startWarnings...)
 	}
@@ -477,8 +497,36 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		if sr.TimeoutMS != nil && *sr.TimeoutMS > 0 {
 			execCtx, tCancel = context.WithTimeout(runCtx, time.Duration(*sr.TimeoutMS)*time.Millisecond)
 		}
+		cancelExec := func() {
+			if tCancel != nil {
+				tCancel()
+			}
+		}
 
 		e.progressf("→ stage %s (%s) starting...\n", sid, sr.Worker)
+
+		repoURL := ""
+		if opts.Remote {
+			if u, err := originRemoteURL(run.CWD); err == nil {
+				repoURL = u
+			} else {
+				cancelExec()
+				runCancel()
+				sr.Status = store.StageStatusFailed
+				msg := fmt.Sprintf("resolve origin remote for ate: %v", err)
+				sr.Summary = &msg
+				if err := e.Store.UpdateStage(sr); err != nil {
+					return false, err
+				}
+				if err := e.skipRemaining(runID); err != nil {
+					return false, err
+				}
+				if err := e.Store.UpdateRunStatus(runID, store.RunStatusFailed); err != nil {
+					return false, err
+				}
+				return true, nil
+			}
+		}
 
 		req := worker.Request{
 			RunID:    runID,
@@ -494,12 +542,12 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			Output:   e.Progress,
 			LogPath:  filepath.Join(run.RunDir, "logs", sid+".log"),
 			Env:      shuttleStageEnv(run.RunDir, sid),
+			Branch:   branch,
+			RepoURL:  repoURL,
 		}
 
 		result, execErr := w.Execute(execCtx, req)
-		if tCancel != nil {
-			tCancel()
-		}
+		cancelExec()
 		runCancel()
 
 		if execErr != nil || result.Status == worker.StatusFailed {

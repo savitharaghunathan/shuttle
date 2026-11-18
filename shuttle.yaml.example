@@ -9,6 +9,14 @@ open_pr:
   command: ["echo", "open_pr skipped: configure open_pr.command"]
 ship:
   command: ["echo", "ship skipped: configure ship.command"]
+# Required for `shuttle run --remote` (Agent Substrate). See deploy/ate/README.md.
+# ate:
+#   endpoint: "127.0.0.1:8443"
+#   atespace: shuttle
+#   actor_template: shuttle-claude
+#   task_url: "http://127.0.0.1:8000"
+#   token_file: ""
+#   insecure: true
 workers:
   shell:
     shell: /bin/bash

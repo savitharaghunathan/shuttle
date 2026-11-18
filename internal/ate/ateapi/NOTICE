@@ -1,0 +1,4 @@
+This directory vendors generated gRPC/protobuf stubs from Agent Substrate
+(https://github.com/agent-substrate/substrate), Copyright 2026 The Agent Substrate Authors,
+licensed under the Apache License, Version 2.0.
+See https://www.apache.org/licenses/LICENSE-2.0

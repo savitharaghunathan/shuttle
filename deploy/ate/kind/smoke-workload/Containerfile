@@ -1,0 +1,11 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache git busybox-extras
+
+WORKDIR /opt/shuttle-smoke
+COPY handle.sh server.sh /opt/shuttle-smoke/
+RUN chmod +x /opt/shuttle-smoke/handle.sh /opt/shuttle-smoke/server.sh
+
+ENV PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["/opt/shuttle-smoke/server.sh"]

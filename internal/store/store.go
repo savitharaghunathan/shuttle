@@ -49,6 +49,7 @@ type Run struct {
 	Model       string
 	IssueRef    string
 	ParentRunID string
+	Remote      bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -116,7 +117,11 @@ func migrateRuns(db *sql.DB) error {
 			return fmt.Errorf("add column %s: %w", col, err)
 		}
 	}
-	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC)`)
+	_, err := db.Exec(`ALTER TABLE runs ADD COLUMN remote INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return fmt.Errorf("add column remote: %w", err)
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC)`)
 	if err != nil {
 		return fmt.Errorf("create runs index: %w", err)
 	}
@@ -140,9 +145,13 @@ func (s *Store) CreateRun(run Run) error {
 		run.UpdatedAt = now
 	}
 
+	remote := 0
+	if run.Remote {
+		remote = 1
+	}
 	_, err := s.db.Exec(`
-INSERT INTO runs (id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO runs (id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, remote, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID,
 		run.TemplateID,
 		string(run.Status),
@@ -152,6 +161,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.Model,
 		run.IssueRef,
 		run.ParentRunID,
+		remote,
 		formatTime(run.CreatedAt),
 		formatTime(run.UpdatedAt),
 	)
@@ -163,7 +173,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 func (s *Store) GetRun(id string) (Run, error) {
 	row := s.db.QueryRow(`
-SELECT id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, created_at, updated_at
+SELECT id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, remote, created_at, updated_at
 FROM runs
 WHERE id = ?`, id)
 
@@ -270,7 +280,7 @@ func (s *Store) ListRuns(opts ListRunsOpts) ([]Run, error) {
 		where = append(where, "created_at >= ?")
 		args = append(args, formatTime(opts.Since))
 	}
-	q := `SELECT id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, created_at, updated_at FROM runs`
+	q := `SELECT id, template_id, status, cwd, run_dir, agent, model, issue_ref, parent_run_id, remote, created_at, updated_at FROM runs`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -436,6 +446,7 @@ func scanRun(row interface {
 	var status string
 	var createdAt string
 	var updatedAt string
+	var remote int
 	if err := row.Scan(
 		&run.ID,
 		&run.TemplateID,
@@ -446,6 +457,7 @@ func scanRun(row interface {
 		&run.Model,
 		&run.IssueRef,
 		&run.ParentRunID,
+		&remote,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -462,6 +474,7 @@ func scanRun(row interface {
 		return Run{}, err
 	}
 	run.Status = RunStatus(status)
+	run.Remote = remote != 0
 
 	return run, nil
 }

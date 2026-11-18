@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Create atespace + smoke/claude actor templates via kubectl-ate.
+set -euo pipefail
+# shellcheck source=lib.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+
+need kubectl
+need go
+ensure_gopath_bin
+kind_export_kubeconfig "${KIND_CLUSTER_NAME}"
+
+ATECTL=(kubectl ate --context "${KUBECTL_CONTEXT}")
+if ! kubectl ate --help >/dev/null 2>&1; then
+  if command -v kubectl-ate >/dev/null; then
+    ATECTL=(kubectl-ate --context "${KUBECTL_CONTEXT}")
+  else
+    echo "kubectl-ate plugin missing; run ensure-substrate.sh (installs to $(go env GOPATH)/bin)" >&2
+    exit 1
+  fi
+fi
+
+refs_file="${KIND_DIR}/.generated-image-refs.env"
+if [[ -f "${refs_file}" ]]; then
+  # shellcheck disable=SC1090
+  source "${refs_file}"
+fi
+if [[ "${SHUTTLE_SMOKE_IMAGE}" != *@sha256:* || "${SHUTTLE_ACTOR_IMAGE}" != *@sha256:* ]]; then
+  echo "ActorTemplate images must be digest-pinned (@sha256:…). Run build-images.sh first." >&2
+  echo "  SHUTTLE_SMOKE_IMAGE=${SHUTTLE_SMOKE_IMAGE}" >&2
+  echo "  SHUTTLE_ACTOR_IMAGE=${SHUTTLE_ACTOR_IMAGE}" >&2
+  exit 1
+fi
+
+log "Ensuring atespace ${ATE_ATESPACE}"
+"${ATECTL[@]}" create atespace "${ATE_ATESPACE}" 2>/dev/null || true
+
+smoke_tmpl="${KIND_DIR}/.generated-smoke-template.yaml"
+claude_tmpl="${KIND_DIR}/.generated-claude-template.yaml"
+
+# Manifests are protojson-shaped ateapi.ActorTemplate (image is a string).
+# workerSelector matches deploy/ate/kind/workerpool.yaml labels.
+# Resource limits must fit the WorkerPool template capacity (1 CPU / 1Gi).
+# Trust bundle so HTTPS through atenet-egress MITM verifies (git/curl/claude).
+trust_volumes=$(cat <<'YAML'
+volumes:
+- name: system-info
+  systemInfo:
+    dataSources:
+    - trustBundle:
+        names:
+        - egress-mitm.ate.dev
+        - system-roots.ate.dev
+        path: egress-trust-bundle/trust-bundle.pem
+YAML
+)
+
+cat >"${smoke_tmpl}" <<EOF
+metadata:
+  atespace: ${ATE_ATESPACE}
+  name: ${ATE_SMOKE_TEMPLATE}
+workerSelector:
+  matchLabels:
+    workload: shuttle
+containers:
+- name: agent
+  image: ${SHUTTLE_SMOKE_IMAGE}
+  env:
+  - name: SSL_CERT_FILE
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  - name: GIT_SSL_CAINFO
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  volumeMounts:
+  - name: system-info
+    mountPath: /run/ate
+resources:
+  limits:
+    cpuMillicores: 500
+    memoryBytes: "536870912"
+snapshotConfig:
+  preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+  goldenSnapshotConfig:
+    mode: GOLDEN_SNAPSHOT_MODE_DISABLED
+${trust_volumes}
+EOF
+
+cat >"${claude_tmpl}" <<EOF
+metadata:
+  atespace: ${ATE_ATESPACE}
+  name: ${ATE_TEMPLATE}
+workerSelector:
+  matchLabels:
+    workload: shuttle
+containers:
+- name: agent
+  image: ${SHUTTLE_ACTOR_IMAGE}
+  env:
+  - name: SSL_CERT_FILE
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  - name: GIT_SSL_CAINFO
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  - name: NODE_EXTRA_CA_CERTS
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  volumeMounts:
+  - name: system-info
+    mountPath: /run/ate
+resources:
+  limits:
+    cpuMillicores: 500
+    memoryBytes: "536870912"
+snapshotConfig:
+  preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+  goldenSnapshotConfig:
+    mode: GOLDEN_SNAPSHOT_MODE_DISABLED
+${trust_volumes}
+EOF
+
+log "Creating actor templates (delete+recreate if immutable)"
+"${ATECTL[@]}" delete actor-template "${ATE_SMOKE_TEMPLATE}" -a "${ATE_ATESPACE}" 2>/dev/null || true
+"${ATECTL[@]}" delete actor-template "${ATE_TEMPLATE}" -a "${ATE_ATESPACE}" 2>/dev/null || true
+"${ATECTL[@]}" create actor-template -f "${smoke_tmpl}"
+"${ATECTL[@]}" create actor-template -f "${claude_tmpl}"
+
+log "Templates ready: ${ATE_SMOKE_TEMPLATE}, ${ATE_TEMPLATE}"

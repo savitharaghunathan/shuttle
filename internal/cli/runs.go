@@ -28,6 +28,13 @@ func newResumeCommand(out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			run, err := app.store.GetRun(runID)
+			if err != nil {
+				return err
+			}
+			if err := app.ensureRemoteForRun(cmd.Context(), run); err != nil {
+				return err
+			}
 			app.engine.Progress = out
 			if err := app.engine.ResumeRun(cmd.Context(), runID); err != nil {
 				return err
@@ -52,6 +59,13 @@ func newRetryCommand(out, errOut io.Writer) *cobra.Command {
 			defer app.close()
 			runID, err := app.store.ResolveRunID(args[0])
 			if err != nil {
+				return err
+			}
+			parent, err := app.store.GetRun(runID)
+			if err != nil {
+				return err
+			}
+			if err := app.ensureRemoteForRun(cmd.Context(), parent); err != nil {
 				return err
 			}
 			app.engine.Progress = out
@@ -250,6 +264,7 @@ func writeRunsJSON(out io.Writer, app *appContext, runs []store.Run) error {
 		Model        string `json:"model"`
 		TemplateID   string `json:"template_id"`
 		IssueRef     string `json:"issue_ref,omitempty"`
+		Remote       bool   `json:"remote,omitempty"`
 		CreatedAt    string `json:"created_at"`
 		UpdatedAt    string `json:"updated_at"`
 		WallDuration int64  `json:"wall_duration"`
@@ -261,6 +276,7 @@ func writeRunsJSON(out io.Writer, app *appContext, runs []store.Run) error {
 		list = append(list, runJSON{
 			ID: run.ID, ParentRunID: run.ParentRunID, Status: string(run.Status),
 			Agent: run.Agent, Model: run.Model, TemplateID: run.TemplateID, IssueRef: run.IssueRef,
+			Remote:    run.Remote,
 			CreatedAt: run.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: run.UpdatedAt.UTC().Format(time.RFC3339),
 			WallDuration: int64(runDuration(run).Seconds()),
 			CurrentStage: runCurrentStage(app, run, cache),

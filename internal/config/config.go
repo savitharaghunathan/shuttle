@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/savitharaghunathan/shuttle/internal/ate"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,6 +32,7 @@ type Config struct {
 	OpenPR         StageConfig             `yaml:"open_pr,omitempty"`
 	Ship           StageConfig             `yaml:"ship,omitempty"`
 	Workers        map[string]WorkerPreset `yaml:"workers,omitempty"`
+	Ate            ate.Config              `yaml:"ate,omitempty"`
 }
 
 type fileConfig struct {
@@ -43,6 +45,7 @@ type fileConfig struct {
 	OpenPR         StageConfig                 `yaml:"open_pr"`
 	Ship           StageConfig                 `yaml:"ship"`
 	Workers        map[string]workerPresetYAML `yaml:"workers"`
+	Ate            ate.Config                  `yaml:"ate"`
 }
 
 type workerPresetYAML struct {
@@ -82,6 +85,7 @@ func applyDefaults(raw *fileConfig) *Config {
 		Test:           raw.Test,
 		OpenPR:         raw.OpenPR,
 		Ship:           raw.Ship,
+		Ate:            raw.Ate,
 	}
 
 	if cfg.DefaultWorker == "" {

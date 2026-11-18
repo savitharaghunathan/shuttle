@@ -1,0 +1,15 @@
+FROM node:20-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates curl netcat-traditional \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g @anthropic-ai/claude-code \
+  && update-alternatives --set nc /bin/nc.traditional
+
+WORKDIR /opt/shuttle-actor
+COPY handle.sh server.sh /opt/shuttle-actor/
+RUN chmod +x /opt/shuttle-actor/handle.sh /opt/shuttle-actor/server.sh
+
+ENV PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["/opt/shuttle-actor/server.sh"]
