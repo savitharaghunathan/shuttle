@@ -16,12 +16,15 @@ if ! command -v ko >/dev/null 2>&1; then
   ensure_gopath_bin
 fi
 
-log "Building ateworker-gvisor → ${KO_DOCKER_REPO}"
+# Use a path under the registry (not --bare): ko rejects "localhost:5001" as a
+# bare repository name because of the port colon.
+ko_repo="localhost:${KIND_REGISTRY_PORT}"
+log "Building ateworker-gvisor → ${ko_repo}/ateworker-gvisor"
 worker_ref="$(
   cd "${ATE_SRC}"
-  KO_DOCKER_REPO="${KO_DOCKER_REPO}" \
+  KO_DOCKER_REPO="${ko_repo}" \
   KO_DEFAULTPLATFORMS="${KO_DEFAULTPLATFORMS:-linux/arm64}" \
-    ko build --bare go.ate.dev/substrate/cmd/ateworker-gvisor
+    ko build go.ate.dev/substrate/cmd/ateworker-gvisor
 )"
 worker_ref="$(echo "${worker_ref}" | tr -d '[:space:]')"
 [[ "${worker_ref}" == *@sha256:* ]] || {

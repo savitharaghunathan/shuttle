@@ -27,7 +27,8 @@ build_and_push() {
   rm -f "${digest_file}"
   [[ -n "${digest}" ]] || { echo "empty digest for ${tag}" >&2; exit 1; }
   # Keep localhost host in the pinned ref so kind's containerd localhost:PORT mirror matches.
-  repo="${tag%%:*}"
+  # Strip only the trailing :tag (not the registry host:port).
+  repo="${tag%:*}"
   pinned="${repo}@${digest}"
   printf '%s=%q\n' "${varname}" "${pinned}" >>"${refs_file}"
   # Export for same-shell callers; apply-templates sources the file.
