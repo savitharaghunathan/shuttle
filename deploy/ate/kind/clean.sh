@@ -24,7 +24,8 @@ rm -f "${KIND_DIR}/.generated-kind-config.yaml" \
   "${KIND_DIR}/.generated-image-refs.env" \
   "${KIND_DIR}/.generated-workerpool.yaml" \
   "${KIND_DIR}/.generated-smoke-template.yaml" \
-  "${KIND_DIR}/.generated-claude-template.yaml"
+  "${KIND_DIR}/.generated-claude-template.yaml" \
+  "${KIND_DIR}/.generated-smoke-egress.yaml"
 
 # Port-forward / proxy leftovers from smoke
 rm -f /tmp/shuttle-ate-api-pf.log /tmp/shuttle-ate-proxy.log

@@ -45,6 +45,23 @@ log "Create/resume smoke actor ${ACTOR}"
 "${ATECTL[@]}" create actor "${ACTOR}" -a "${ATE_ATESPACE}" --template "${ATE_SMOKE_TEMPLATE}" 2>/dev/null || true
 "${ATECTL[@]}" resume actor "${ACTOR}" -a "${ATE_ATESPACE}"
 
+# Egress is deny-by-default; without a policy, git clone cannot resolve/reach GitHub.
+egress_file="${KIND_DIR}/.generated-smoke-egress.yaml"
+cat >"${egress_file}" <<'EOF'
+rules:
+- https:
+    hostnames: ["github.com", "*.github.com"]
+- http:
+    hostnames: ["github.com", "*.github.com"]
+    ports:
+      all: {}
+EOF
+log "Ensuring egress policy for ${ACTOR} (github.com)"
+"${ATECTL[@]}" delete egress-policy "${ACTOR}" -a "${ATE_ATESPACE}" 2>/dev/null || true
+"${ATECTL[@]}" create egress-policy "${ACTOR}" -a "${ATE_ATESPACE}" -f "${egress_file}"
+# Gateway may cache a prior deny briefly.
+sleep 2
+
 log "Port-forward API + start actor proxy in background"
 kubectl --context="${KUBECTL_CONTEXT}" -n ate-system port-forward svc/api 8443:443 >/tmp/shuttle-ate-api-pf.log 2>&1 &
 API_PF=$!
@@ -80,14 +97,17 @@ done
 sleep 1
 
 log "POST /v1/tasks"
-resp=$(curl -sf --max-time 180 -X POST "http://127.0.0.1:8000/v1/tasks" \
+http_code=0
+resp=$(curl -sS --max-time 180 -o /tmp/shuttle-ate-smoke-resp.json -w '%{http_code}' -X POST "http://127.0.0.1:8000/v1/tasks" \
   -H "Content-Type: application/json" \
   -H "ate-target-actor: ${ATE_ATESPACE}/${ACTOR}" \
-  -d "{\"prompt\":\"kind smoke\",\"branch\":\"${BRANCH}\",\"repo_url\":\"${REPO_URL}\"}")
-
-echo "${resp}"
-echo "${resp}" | grep -q '"status":"succeeded"' || {
-  echo "smoke failed: expected status=succeeded" >&2
+  -d "{\"prompt\":\"kind smoke\",\"branch\":\"${BRANCH}\",\"repo_url\":\"${REPO_URL}\"}") || true
+http_code="${resp}"
+body="$(cat /tmp/shuttle-ate-smoke-resp.json 2>/dev/null || true)"
+echo "HTTP ${http_code}"
+echo "${body}"
+echo "${body}" | grep -q '"status":"succeeded"' || {
+  echo "smoke failed: expected status=succeeded (HTTP ${http_code})" >&2
   exit 1
 }
 
