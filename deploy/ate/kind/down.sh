@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tear down kind cluster + local registry created for ate dogfood.
+# Tear down kind cluster + local registry used for ate kind testing.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"

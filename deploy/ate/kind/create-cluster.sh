@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Create a kind cluster + local registry using podman (not docker).
-# Mirrors Agent Substrate's hack/create-kind-cluster.sh shape for gVisor dogfood.
+# Mirrors Agent Substrate's hack/create-kind-cluster.sh shape for gVisor local test.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"

@@ -19,7 +19,7 @@ ensure_docker_shim
 log "Deploying ate-system (this can take several minutes)"
 (
   cd "${ATE_SRC}"
-  # Prefer a credential provider that works for local kind dogfood.
+  # Prefer a credential provider that works for local kind testing.
   go run ./cmd/ate-setup deploy ate-system \
     --credential-provider='{"name":"k8s.io"}' \
     --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client

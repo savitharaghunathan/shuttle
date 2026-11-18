@@ -1,4 +1,4 @@
-# Local ate dogfood (kind + podman)
+# Local ate kind test (kind + podman)
 
 Bring up Agent Substrate on a local kind cluster using **podman** as the kind
 provider, build shuttle actor images from **Containerfile**s, and run a shell-only
@@ -78,7 +78,7 @@ SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
 - Claude actor: `deploy/ate/workload/Containerfile` + `server.sh` / `handle.sh`
 - Smoke actor: `deploy/ate/kind/smoke-workload/Containerfile` (shell, no LLM)
 
-## shuttle.yaml for dogfood
+## shuttle.yaml for local testing
 
 ```yaml
 ate:

@@ -9,7 +9,7 @@
 #   make verify            build + lint + test
 #   make serve-test-app    serve API from SHUTTLE_TEST_APP (~/local_dev/test)
 #   make smoke-test-app    API recovery smoke (server must be running)
-#   make ate-kind-clean    tear down kind+podman ate dogfood cluster/state
+#   make ate-kind-clean    tear down kind+podman ate test cluster/state
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -90,7 +90,7 @@ ate-kind-up: ## kind+podman cluster, ate-system, actor images/templates
 ate-kind-down: ## tear down kind cluster + local registry
 	$(ATE_KIND)/down.sh
 
-ate-kind-clean: ## clear ate kind dogfood (cluster, registry, shims, generated files)
+ate-kind-clean: ## remove ate kind cluster, registry, shims, generated files
 	$(ATE_KIND)/clean.sh
 
 ate-kind-build-images: ## podman build/push Containerfiles to kind registry

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared env for shuttle ate kind+podman dogfood.
+# Shared env for shuttle ate kind+podman local test.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

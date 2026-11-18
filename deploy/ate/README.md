@@ -4,7 +4,7 @@ Remote agent stages (`shuttle run --remote`) require a pre-provisioned ate clust
 Shuttle does **not** install ate; it talks to `ate-api-server` over gRPC and posts
 tasks to the actor HTTP API.
 
-## Local dogfood (kind + podman)
+## Local test setup (kind + podman)
 
 Preferred path for development:
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bring up kind (podman) + ate + shuttle actor images/templates for local dogfood.
+# Bring up kind (podman) + ate + shuttle actor images/templates for local test setup.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
