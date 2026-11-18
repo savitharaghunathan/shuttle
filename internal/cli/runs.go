@@ -276,7 +276,7 @@ func writeRunsJSON(out io.Writer, app *appContext, runs []store.Run) error {
 		list = append(list, runJSON{
 			ID: run.ID, ParentRunID: run.ParentRunID, Status: string(run.Status),
 			Agent: run.Agent, Model: run.Model, TemplateID: run.TemplateID, IssueRef: run.IssueRef,
-			Remote: run.Remote,
+			Remote:    run.Remote,
 			CreatedAt: run.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: run.UpdatedAt.UTC().Format(time.RFC3339),
 			WallDuration: int64(runDuration(run).Seconds()),
 			CurrentStage: runCurrentStage(app, run, cache),

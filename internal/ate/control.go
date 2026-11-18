@@ -140,4 +140,3 @@ func EnsureActor(ctx context.Context, ctrl Control, atespace, name, template str
 	}
 	return actor, nil
 }
-
