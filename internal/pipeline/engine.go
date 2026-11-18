@@ -497,6 +497,11 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		if sr.TimeoutMS != nil && *sr.TimeoutMS > 0 {
 			execCtx, tCancel = context.WithTimeout(runCtx, time.Duration(*sr.TimeoutMS)*time.Millisecond)
 		}
+		cancelExec := func() {
+			if tCancel != nil {
+				tCancel()
+			}
+		}
 
 		e.progressf("→ stage %s (%s) starting...\n", sid, sr.Worker)
 
@@ -505,6 +510,8 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 			if u, err := originRemoteURL(run.CWD); err == nil {
 				repoURL = u
 			} else {
+				cancelExec()
+				runCancel()
 				sr.Status = store.StageStatusFailed
 				msg := fmt.Sprintf("resolve origin remote for ate: %v", err)
 				sr.Summary = &msg
@@ -540,9 +547,7 @@ func (e *Engine) Tick(ctx context.Context, runID string) (bool, error) {
 		}
 
 		result, execErr := w.Execute(execCtx, req)
-		if tCancel != nil {
-			tCancel()
-		}
+		cancelExec()
 		runCancel()
 
 		if execErr != nil || result.Status == worker.StatusFailed {
