@@ -50,16 +50,30 @@ fi
 prompt=$(printf '%s' "${body}" | json_get prompt)
 branch=$(printf '%s' "${body}" | json_get branch)
 repo_url=$(printf '%s' "${body}" | json_get repo_url)
+token=$(printf '%s' "${body}" | json_get token)
 
 if [ -z "${branch}" ] || [ -z "${repo_url}" ]; then
   http_json "400 Bad Request" '{"status":"failed","summary":"branch and repo_url required"}'
   exit 0
 fi
 
+# Prefer MITM+system roots projected by ActorTemplate; fall back to image CAs.
+if [ -f /run/ate/egress-trust-bundle/trust-bundle.pem ]; then
+  export SSL_CERT_FILE=/run/ate/egress-trust-bundle/trust-bundle.pem
+  export GIT_SSL_CAINFO=/run/ate/egress-trust-bundle/trust-bundle.pem
+fi
+export GIT_TERMINAL_PROMPT=0
+
+auth_url="${repo_url}"
+if [ -n "${token}" ]; then
+  # https://github.com/org/repo.git → https://x-access-token:TOKEN@github.com/org/repo.git
+  auth_url=$(printf '%s' "${repo_url}" | sed "s#https://#https://x-access-token:${token}@#")
+fi
+
 mkdir -p "${WORK_ROOT}"
 repo_dir="${WORK_ROOT}/repo"
 if [ ! -d "${repo_dir}/.git" ]; then
-  git clone "${repo_url}" "${repo_dir}" >/tmp/clone.log 2>&1 || {
+  git clone "${auth_url}" "${repo_dir}" >/tmp/clone.log 2>&1 || {
     summary=$(tr '\n' ' ' </tmp/clone.log | sed 's/"/\\"/g' | cut -c1-1500)
     http_json "500 Internal Server Error" "{\"status\":\"failed\",\"summary\":\"clone failed: ${summary}\"}"
     exit 0
@@ -68,6 +82,9 @@ else
   git -C "${repo_dir}" fetch origin >/dev/null 2>&1 || true
 fi
 git -C "${repo_dir}" checkout -B "${branch}" >/dev/null 2>&1 || true
+if [ -n "${token}" ]; then
+  git -C "${repo_dir}" remote set-url origin "${auth_url}" >/dev/null 2>&1 || true
+fi
 
 printf 'smoke ok\nprompt=%s\n' "${prompt}" >"${repo_dir}/.shuttle-ate-smoke"
 git -C "${repo_dir}" add -A

@@ -96,18 +96,32 @@ done
 }
 sleep 1
 
+TOKEN="${SMOKE_GIT_TOKEN:-}"
+# Build JSON without leaking the token into shell history via set -x.
+payload_file="$(mktemp)"
+python3 - "${REPO_URL}" "${BRANCH}" "${TOKEN}" <<'PY' >"${payload_file}"
+import json, sys
+repo, branch, token = sys.argv[1], sys.argv[2], sys.argv[3]
+body = {"prompt": "kind smoke", "branch": branch, "repo_url": repo}
+if token:
+    body["token"] = token
+json.dump(body, sys.stdout)
+PY
+
 log "POST /v1/tasks"
 http_code=0
 resp=$(curl -sS --max-time 180 -o /tmp/shuttle-ate-smoke-resp.json -w '%{http_code}' -X POST "http://127.0.0.1:8000/v1/tasks" \
   -H "Content-Type: application/json" \
   -H "ate-target-actor: ${ATE_ATESPACE}/${ACTOR}" \
-  -d "{\"prompt\":\"kind smoke\",\"branch\":\"${BRANCH}\",\"repo_url\":\"${REPO_URL}\"}") || true
+  --data-binary @"${payload_file}") || true
+rm -f "${payload_file}"
 http_code="${resp}"
 body="$(cat /tmp/shuttle-ate-smoke-resp.json 2>/dev/null || true)"
 echo "HTTP ${http_code}"
 echo "${body}"
 echo "${body}" | grep -q '"status":"succeeded"' || {
   echo "smoke failed: expected status=succeeded (HTTP ${http_code})" >&2
+  echo "Hint: private repos need SMOKE_GIT_TOKEN (or GITHUB_TOKEN) in smoke.env; public HTTPS remotes work without a token." >&2
   exit 1
 }
 

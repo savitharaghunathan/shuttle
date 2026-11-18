@@ -42,6 +42,8 @@ _load_smoke_env
 export SMOKE_BRANCH="${SMOKE_BRANCH:-shuttle/ate-kind-smoke}"
 export SMOKE_ACTOR="${SMOKE_ACTOR:-shuttle-smoke-1}"
 export SMOKE_REPO_URL="${SMOKE_REPO_URL:-}"
+# Optional PAT for private HTTPS remotes (also accepts GITHUB_TOKEN).
+export SMOKE_GIT_TOKEN="${SMOKE_GIT_TOKEN:-${GITHUB_TOKEN:-}}"
 export SHUTTLE_TEST_APP="${SHUTTLE_TEST_APP:-}"
 
 container() {
