@@ -7,6 +7,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 need kubectl
 need curl
+need go
+ensure_gopath_bin
+kind_export_kubeconfig "${KIND_CLUSTER_NAME}"
 
 ACTOR="${SMOKE_ACTOR}"
 BRANCH="${SMOKE_BRANCH}"
@@ -28,8 +31,15 @@ if [[ -n "${SHUTTLE_TEST_APP}" ]]; then
   log "Local checkout hint: ${SHUTTLE_TEST_APP}"
 fi
 
-ATECTL=(kubectl ate)
-kubectl ate --help >/dev/null 2>&1 || ATECTL=(kubectl-ate)
+ATECTL=(kubectl ate --context "${KUBECTL_CONTEXT}")
+if ! kubectl ate --help >/dev/null 2>&1; then
+  if command -v kubectl-ate >/dev/null; then
+    ATECTL=(kubectl-ate --context "${KUBECTL_CONTEXT}")
+  else
+    echo "kubectl-ate plugin missing; run make ate-kind-up / ensure-substrate.sh" >&2
+    exit 1
+  fi
+fi
 
 log "Create/resume smoke actor ${ACTOR}"
 "${ATECTL[@]}" create actor "${ACTOR}" -a "${ATE_ATESPACE}" --template "${ATE_SMOKE_TEMPLATE}" 2>/dev/null || true
