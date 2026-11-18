@@ -21,9 +21,11 @@ if container inspect -f '{{.State.Running}}' "${reg_name}" 2>/dev/null | grep -q
 else
   log "Starting local registry ${reg_name} on 127.0.0.1:${reg_port}"
   container rm -f "${reg_name}" >/dev/null 2>&1 || true
+  # Bind on all interfaces (not only 127.0.0.1) so macOS "localhost" → ::1
+  # still reaches the registry (ko/podman otherwise get connection refused).
   container run -d --restart=always \
     --name "${reg_name}" \
-    -p "127.0.0.1:${reg_port}:5000" \
+    -p "${reg_port}:5000" \
     registry:2
 fi
 

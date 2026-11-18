@@ -69,7 +69,8 @@ SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
 
 | Script | Role |
 |---|---|
-| `up.sh` | cluster → ate-system → build/push images → templates |
+| `up.sh` | cluster → ate-system → images → WorkerPool → templates |
+| `apply-workerpool.sh` | `ko build` ateworker-gvisor + apply `WorkerPool` |
 | `down.sh` | delete cluster + registry |
 | `smoke.sh` | resume smoke actor + `POST /v1/tasks` |
 | `port-forward.sh` | API `:8443` + actor proxy `:8000` |

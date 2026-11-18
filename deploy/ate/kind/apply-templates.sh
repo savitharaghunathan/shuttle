@@ -38,10 +38,15 @@ smoke_tmpl="${KIND_DIR}/.generated-smoke-template.yaml"
 claude_tmpl="${KIND_DIR}/.generated-claude-template.yaml"
 
 # Manifests are protojson-shaped ateapi.ActorTemplate (image is a string).
+# workerSelector matches deploy/ate/kind/workerpool.yaml labels.
+# Resource limits must fit the WorkerPool template capacity (1 CPU / 1Gi).
 cat >"${smoke_tmpl}" <<EOF
 metadata:
   atespace: ${ATE_ATESPACE}
   name: ${ATE_SMOKE_TEMPLATE}
+workerSelector:
+  matchLabels:
+    workload: shuttle
 containers:
 - name: agent
   image: ${SHUTTLE_SMOKE_IMAGE}
@@ -57,13 +62,16 @@ cat >"${claude_tmpl}" <<EOF
 metadata:
   atespace: ${ATE_ATESPACE}
   name: ${ATE_TEMPLATE}
+workerSelector:
+  matchLabels:
+    workload: shuttle
 containers:
 - name: agent
   image: ${SHUTTLE_ACTOR_IMAGE}
 resources:
   limits:
-    cpuMillicores: 2000
-    memoryBytes: "4294967296"
+    cpuMillicores: 500
+    memoryBytes: "536870912"
 snapshotConfig:
   preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
 EOF

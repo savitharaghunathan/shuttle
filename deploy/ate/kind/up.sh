@@ -11,19 +11,22 @@ need kubectl
 need go
 need git
 
-log "1/5 create kind cluster (podman)"
+log "1/6 create kind cluster (podman)"
 "${DIR}/create-cluster.sh"
 
-log "2/5 ensure Agent Substrate sources + kubectl-ate"
+log "2/6 ensure Agent Substrate sources + kubectl-ate"
 "${DIR}/ensure-substrate.sh"
 
-log "3/5 install ate-system"
+log "3/6 install ate-system"
 "${DIR}/install-ate.sh"
 
-log "4/5 build + push actor images"
+log "4/6 build + push actor images"
 "${DIR}/build-images.sh"
 
-log "5/5 apply actor templates"
+log "5/6 apply WorkerPool (ateworker-gvisor)"
+"${DIR}/apply-workerpool.sh"
+
+log "6/6 apply actor templates"
 "${DIR}/apply-templates.sh"
 
 cat <<EOF
