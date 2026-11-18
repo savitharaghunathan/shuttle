@@ -16,14 +16,17 @@ build_and_push() {
   local context="$2"
   local tag="$3"
   local varname="$4"
-  local digest_file pinned repo
+  local digest_file pinned repo push_dest
   log "Building ${tag} from ${containerfile}"
   podman build -f "${containerfile}" -t "${tag}" "${context}"
   digest_file="$(mktemp)"
-  podman push --tls-verify=false --digestfile="${digest_file}" "${tag}"
+  # Registry listens on 127.0.0.1; macOS "localhost" may resolve to ::1 and fail.
+  push_dest="docker://127.0.0.1:${KIND_REGISTRY_PORT}/${tag#*/}"
+  podman push --tls-verify=false --digestfile="${digest_file}" "${tag}" "${push_dest}"
   digest="$(tr -d '[:space:]' <"${digest_file}")"
   rm -f "${digest_file}"
   [[ -n "${digest}" ]] || { echo "empty digest for ${tag}" >&2; exit 1; }
+  # Keep localhost host in the pinned ref so kind's containerd localhost:PORT mirror matches.
   repo="${tag%%:*}"
   pinned="${repo}@${digest}"
   printf '%s=%q\n' "${varname}" "${pinned}" >>"${refs_file}"
