@@ -295,6 +295,7 @@ func (e *Engine) RetryRun(ctx context.Context, runID string, p RetryParams) (Ret
 		Model:       model,
 		IssueRef:    parent.IssueRef,
 		ParentRunID: parent.ID,
+		Remote:      parent.Remote,
 	})
 	if err != nil {
 		return RetryResult{}, err
