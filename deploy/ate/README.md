@@ -4,20 +4,34 @@ Remote agent stages (`shuttle run --remote`) require a pre-provisioned ate clust
 Shuttle does **not** install ate; it talks to `ate-api-server` over gRPC and posts
 tasks to the actor HTTP API.
 
-## Prerequisites
+## Local dogfood (kind + podman)
 
-1. Agent Substrate installed (kind quickstart or GKE): https://ate.dev/docs/get-started/quickstart/
+Preferred path for development:
+
+```bash
+make ate-kind-up
+SMOKE_REPO_URL=https://github.com/org/throwaway.git make ate-kind-smoke
+make ate-kind-down
+```
+
+Details: [kind/README.md](kind/README.md).
+
+## Prerequisites (manual / non-kind)
+
+1. Agent Substrate installed: https://ate.dev/docs/get-started/quickstart/
 2. A gVisor `WorkerPool` with capacity for your actors
 3. An atespace (example: `shuttle`)
-4. Actor template `shuttle-claude` built from this directory’s workload image
-5. Egress policy allowing Anthropic + your git host; credentials injected via ate egress (preferred)
+4. Actor template built from this directory’s workload image
+5. Egress policy allowing Anthropic + your git host
 
 ## Build & push the workload image
 
+Images use **Containerfile** (podman-friendly) and **shell** entrypoints (no Python).
+
 ```bash
-export KO_DOCKER_REPO=...   # or your registry
-docker buildx build --platform linux/amd64 -t ${KO_DOCKER_REPO}/shuttle-claude-actor:latest ./workload
-docker push ${KO_DOCKER_REPO}/shuttle-claude-actor:latest
+export KO_DOCKER_REPO=...   # or localhost:5001 for kind
+podman build -f workload/Containerfile -t ${KO_DOCKER_REPO}/shuttle-claude-actor:latest ./workload
+podman push --tls-verify=false ${KO_DOCKER_REPO}/shuttle-claude-actor:latest
 ```
 
 Pin the digest in `actor-template.yaml` before applying.
@@ -34,10 +48,10 @@ kubectl ate create actor-template -f actor-template.yaml
 
 ```yaml
 ate:
-  endpoint: "127.0.0.1:8443"   # port-forward svc/api -n ate-system
+  endpoint: "127.0.0.1:8443"          # port-forward svc/api -n ate-system
   atespace: shuttle
   actor_template: shuttle-claude
-  task_url: "http://127.0.0.1:8000"  # kubectl ate proxy / router
+  task_url: "http://127.0.0.1:8000" # kubectl ate proxy / router
   insecure: true
 ```
 
