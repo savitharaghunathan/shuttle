@@ -60,6 +60,69 @@ kind_cmd() {
   KIND_EXPERIMENTAL_PROVIDER="${KIND_EXPERIMENTAL_PROVIDER}" kind "$@"
 }
 
+# kind v0.32 + podman 6.x breaks `kind get clusters` / export kubeconfig:
+# podman ps --format '{{index .Labels "…"}}' errors because Labels is not a map
+# in that template. Derive cluster names from label strings instead.
+kind_cluster_names() {
+  if [[ "${KIND_EXPERIMENTAL_PROVIDER}" == "podman" ]]; then
+    podman ps -a --filter label=io.x-k8s.kind.cluster --format '{{.Labels}}' 2>/dev/null \
+      | sed -n 's/.*io\.x-k8s\.kind\.cluster=\([^,]*\).*/\1/p' \
+      | sort -u
+    return 0
+  fi
+  kind_cmd get clusters 2>/dev/null || true
+}
+
+kind_cluster_exists() {
+  local name="$1"
+  kind_cluster_names | grep -qx "${name}"
+}
+
+# Write/merge kubeconfig for a kind cluster. Prefer kind export; on podman
+# template failure, rebuild from the control-plane admin.conf + published port.
+kind_export_kubeconfig() {
+  local name="${1:-${KIND_CLUSTER_NAME}}"
+  local context="kind-${name}"
+  if kind_cmd export kubeconfig --name "${name}" >/dev/null 2>&1; then
+    kubectl config use-context "${context}" >/dev/null 2>&1 || true
+    return 0
+  fi
+  if [[ "${KIND_EXPERIMENTAL_PROVIDER}" != "podman" ]]; then
+    echo "kind export kubeconfig failed for ${name}" >&2
+    return 1
+  fi
+  local node port tmp merged
+  node="$(podman ps -a --filter "label=io.x-k8s.kind.cluster=${name}" \
+    --filter "label=io.x-k8s.kind.role=control-plane" --format '{{.Names}}' | head -1)"
+  [[ -n "${node}" ]] || { echo "no control-plane container for kind cluster ${name}" >&2; return 1; }
+  port="$(podman port "${node}" 6443/tcp | head -1 | awk -F: '{print $NF}')"
+  [[ -n "${port}" ]] || { echo "no published 6443 for ${node}" >&2; return 1; }
+  tmp="$(mktemp)"
+  merged="$(mktemp)"
+  podman exec "${node}" cat /etc/kubernetes/admin.conf >"${tmp}"
+  # Point at the published localhost port and rename to kind-<name> context.
+  sed -E \
+    -e "s#server: https://.*#server: https://127.0.0.1:${port}#" \
+    -e "s#kubernetes-admin@${name}#${context}#g" \
+    -e "s#(name|cluster): ${name}\$#\\1: ${context}#g" \
+    -e "s#user: kubernetes-admin\$#user: ${context}#" \
+    -e "s#- name: kubernetes-admin\$#- name: ${context}#" \
+    -e "s#current-context: .*#current-context: ${context}#" \
+    "${tmp}" >"${tmp}.sed"
+  mv "${tmp}.sed" "${tmp}"
+  mkdir -p "${HOME}/.kube"
+  if [[ -f "${HOME}/.kube/config" ]]; then
+    KUBECONFIG="${HOME}/.kube/config:${tmp}" kubectl config view --flatten >"${merged}"
+    mv "${merged}" "${HOME}/.kube/config"
+  else
+    mv "${tmp}" "${HOME}/.kube/config"
+    rm -f "${merged}"
+  fi
+  rm -f "${tmp}" "${merged}"
+  kubectl config use-context "${context}" >/dev/null
+  log "Restored kubeconfig context ${context} via podman (kind export unavailable)"
+}
+
 need() {
   command -v "$1" >/dev/null || { echo "missing required tool: $1" >&2; exit 1; }
 }

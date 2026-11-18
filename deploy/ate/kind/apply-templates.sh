@@ -7,11 +7,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need kubectl
 need go
 ensure_gopath_bin
+kind_export_kubeconfig "${KIND_CLUSTER_NAME}"
 
-ATECTL=(kubectl ate)
+ATECTL=(kubectl ate --context "${KUBECTL_CONTEXT}")
 if ! kubectl ate --help >/dev/null 2>&1; then
   if command -v kubectl-ate >/dev/null; then
-    ATECTL=(kubectl-ate)
+    ATECTL=(kubectl-ate --context "${KUBECTL_CONTEXT}")
   else
     echo "kubectl-ate plugin missing; run ensure-substrate.sh (installs to $(go env GOPATH)/bin)" >&2
     exit 1

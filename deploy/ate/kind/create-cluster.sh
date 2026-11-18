@@ -53,17 +53,30 @@ containerdConfigPatches:
     config_path = "/etc/containerd/certs.d"
 EOF
 
-if kind_cmd get clusters 2>/dev/null | grep -qx "${KIND_CLUSTER_NAME}"; then
+if kind_cluster_exists "${KIND_CLUSTER_NAME}"; then
   log "Deleting existing cluster ${KIND_CLUSTER_NAME}"
-  kind_cmd delete cluster --name "${KIND_CLUSTER_NAME}"
+  # kind delete also uses the broken Labels template on some podman versions;
+  # remove control-plane/worker containers directly when kind fails.
+  if ! kind_cmd delete cluster --name "${KIND_CLUSTER_NAME}"; then
+    log "kind delete failed; removing containers labeled io.x-k8s.kind.cluster=${KIND_CLUSTER_NAME}"
+    while read -r c; do
+      [[ -n "${c}" ]] || continue
+      container rm -f "${c}" >/dev/null 2>&1 || true
+    done < <(container ps -a --filter "label=io.x-k8s.kind.cluster=${KIND_CLUSTER_NAME}" --format '{{.Names}}')
+  fi
 fi
 
 log "Creating kind cluster ${KIND_CLUSTER_NAME}"
 kind_cmd create cluster --name "${KIND_CLUSTER_NAME}" --config "${cfg}"
+kind_export_kubeconfig "${KIND_CLUSTER_NAME}"
 
 # 3. Registry mirror on nodes
 REGISTRY_DIR="/etc/containerd/certs.d/localhost:${reg_port}"
-for node in $(kind_cmd get nodes --name "${KIND_CLUSTER_NAME}"); do
+nodes="$(kind_cmd get nodes --name "${KIND_CLUSTER_NAME}" 2>/dev/null || true)"
+if [[ -z "${nodes}" ]]; then
+  nodes="$(container ps -a --filter "label=io.x-k8s.kind.cluster=${KIND_CLUSTER_NAME}" --format '{{.Names}}')"
+fi
+for node in ${nodes}; do
   container exec "${node}" mkdir -p "${REGISTRY_DIR}"
   cat <<EOF | container exec -i "${node}" cp /dev/stdin "${REGISTRY_DIR}/hosts.toml"
 [host."http://${reg_name}:5000"]
