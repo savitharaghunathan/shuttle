@@ -9,6 +9,7 @@
 #   make verify            build + lint + test
 #   make serve-test-app    serve API from SHUTTLE_TEST_APP (~/local_dev/test)
 #   make smoke-test-app    API recovery smoke (server must be running)
+#   make ate-kind-clean    tear down kind+podman ate dogfood cluster/state
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -27,7 +28,7 @@ TEST_APP_SCRIPTS := examples/scripts
 .PHONY: help build install run clean \
         lint test test-unit test-integration test-race verify \
         serve-test-app smoke-test-app \
-        ate-kind-up ate-kind-down ate-kind-smoke ate-kind-port-forward ate-kind-build-images
+        ate-kind-up ate-kind-down ate-kind-clean ate-kind-smoke ate-kind-port-forward ate-kind-build-images
 
 .DEFAULT_GOAL := help
 
@@ -88,6 +89,9 @@ ate-kind-up: ## kind+podman cluster, ate-system, actor images/templates
 
 ate-kind-down: ## tear down kind cluster + local registry
 	$(ATE_KIND)/down.sh
+
+ate-kind-clean: ## clear ate kind dogfood (cluster, registry, shims, generated files)
+	$(ATE_KIND)/clean.sh
 
 ate-kind-build-images: ## podman build/push Containerfiles to kind registry
 	$(ATE_KIND)/build-images.sh

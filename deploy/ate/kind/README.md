@@ -27,7 +27,7 @@ cp deploy/ate/kind/smoke.env.example deploy/ate/kind/smoke.env
 # edit: SMOKE_REPO_URL=https://github.com/OWNER/REPO.git
 
 make ate-kind-smoke
-make ate-kind-down
+make ate-kind-clean    # cluster + registry + generated local state
 ```
 
 Or pass the remote inline:
