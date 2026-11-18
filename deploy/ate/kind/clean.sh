@@ -18,9 +18,10 @@ if command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
   container rm -f "${KIND_REGISTRY_NAME}" >/dev/null 2>&1 || true
 fi
 
-# Generated configs, docker→podman shim, local smoke.env is kept (user config)
+# Generated configs / digest refs / docker→podman shim; smoke.env is kept (user config)
 rm -rf "${KIND_DIR}/.bin"
 rm -f "${KIND_DIR}/.generated-kind-config.yaml" \
+  "${KIND_DIR}/.generated-image-refs.env" \
   "${KIND_DIR}/.generated-smoke-template.yaml" \
   "${KIND_DIR}/.generated-claude-template.yaml"
 

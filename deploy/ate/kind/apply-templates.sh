@@ -19,6 +19,18 @@ if ! kubectl ate --help >/dev/null 2>&1; then
   fi
 fi
 
+refs_file="${KIND_DIR}/.generated-image-refs.env"
+if [[ -f "${refs_file}" ]]; then
+  # shellcheck disable=SC1090
+  source "${refs_file}"
+fi
+if [[ "${SHUTTLE_SMOKE_IMAGE}" != *@sha256:* || "${SHUTTLE_ACTOR_IMAGE}" != *@sha256:* ]]; then
+  echo "ActorTemplate images must be digest-pinned (@sha256:…). Run build-images.sh first." >&2
+  echo "  SHUTTLE_SMOKE_IMAGE=${SHUTTLE_SMOKE_IMAGE}" >&2
+  echo "  SHUTTLE_ACTOR_IMAGE=${SHUTTLE_ACTOR_IMAGE}" >&2
+  exit 1
+fi
+
 log "Ensuring atespace ${ATE_ATESPACE}"
 "${ATECTL[@]}" create atespace "${ATE_ATESPACE}" 2>/dev/null || true
 
