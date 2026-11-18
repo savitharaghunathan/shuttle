@@ -53,7 +53,10 @@ func Dial(ctx context.Context, opts DialOptions) (*Client, error) {
 	default:
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")))
 	}
-	conn, err := grpc.DialContext(ctx, opts.Endpoint, dialOpts...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(opts.Endpoint, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial ate api %s: %w", opts.Endpoint, err)
 	}

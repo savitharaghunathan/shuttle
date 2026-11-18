@@ -93,7 +93,7 @@ func (w *AteAgent) Execute(ctx context.Context, req Request) (Result, error) {
 		return Result{Status: StatusFailed}, fmt.Errorf("resume actor: %w", err)
 	}
 
-	var log io.Writer = req.Output
+	log := req.Output
 	var logFile *os.File
 	if req.LogPath != "" {
 		f, err := os.OpenFile(req.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
