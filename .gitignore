@@ -6,4 +6,5 @@ bin/
 *.db
 deploy/ate/kind/smoke.env
 deploy/ate/kind/.generated-*.yaml
+deploy/ate/kind/.generated-*.env
 deploy/ate/kind/.bin/
