@@ -56,6 +56,8 @@ resources:
     memoryBytes: "536870912"
 snapshotConfig:
   preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+  goldenSnapshotConfig:
+    mode: GOLDEN_SNAPSHOT_MODE_DISABLED
 EOF
 
 cat >"${claude_tmpl}" <<EOF
@@ -74,6 +76,8 @@ resources:
     memoryBytes: "536870912"
 snapshotConfig:
   preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+  goldenSnapshotConfig:
+    mode: GOLDEN_SNAPSHOT_MODE_DISABLED
 EOF
 
 log "Creating actor templates (delete+recreate if immutable)"
