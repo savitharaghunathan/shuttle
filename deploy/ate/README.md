@@ -10,9 +10,13 @@ Preferred path for development:
 
 ```bash
 make ate-kind-up
-make ate-kind-smoke   # uses https://github.com/savitharaghunathan/test.git
+cp deploy/ate/kind/smoke.env.example deploy/ate/kind/smoke.env
+# set SMOKE_REPO_URL=https://github.com/OWNER/REPO.git
+make ate-kind-smoke
 make ate-kind-down
 ```
+
+Or: `SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke`
 
 Details: [kind/README.md](kind/README.md).
 

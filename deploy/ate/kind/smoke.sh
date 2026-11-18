@@ -10,12 +10,23 @@ need curl
 
 ACTOR="${SMOKE_ACTOR}"
 BRANCH="${SMOKE_BRANCH}"
-REPO_URL="${SMOKE_REPO_URL}"
+REPO_URL="${SMOKE_REPO_URL:-}"
 if [[ -z "${REPO_URL}" ]]; then
-  echo "SMOKE_REPO_URL is empty (expected https://github.com/savitharaghunathan/test.git)." >&2
+  cat >&2 <<'EOF'
+SMOKE_REPO_URL is required (HTTPS git remote the actor can clone/push).
+
+  cp deploy/ate/kind/smoke.env.example deploy/ate/kind/smoke.env
+  # edit SMOKE_REPO_URL=https://github.com/OWNER/REPO.git
+  make ate-kind-smoke
+
+Or: SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
+EOF
   exit 1
 fi
-log "Using test repo ${REPO_URL} (local checkout: ${SHUTTLE_TEST_APP})"
+log "Using smoke repo ${REPO_URL}"
+if [[ -n "${SHUTTLE_TEST_APP}" ]]; then
+  log "Local checkout hint: ${SHUTTLE_TEST_APP}"
+fi
 
 ATECTL=(kubectl ate)
 kubectl ate --help >/dev/null 2>&1 || ATECTL=(kubectl-ate)

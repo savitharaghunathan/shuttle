@@ -21,11 +21,28 @@ export ATE_ATESPACE="${ATE_ATESPACE:-shuttle}"
 export ATE_TEMPLATE="${ATE_TEMPLATE:-shuttle-claude}"
 export ATE_SMOKE_TEMPLATE="${ATE_SMOKE_TEMPLATE:-shuttle-smoke}"
 
-# Default dogfood target: Savitha's local shuttle test app / GitHub repo.
-export SHUTTLE_TEST_APP="${SHUTTLE_TEST_APP:-${HOME}/local_dev/test}"
-export SMOKE_REPO_URL="${SMOKE_REPO_URL:-https://github.com/savitharaghunathan/test.git}"
+# Smoke target repo: set via env or deploy/ate/kind/smoke.env (see smoke.env.example).
+# No default remote — personal repos must not be hardcoded.
 export SMOKE_BRANCH="${SMOKE_BRANCH:-shuttle/ate-kind-smoke}"
 export SMOKE_ACTOR="${SMOKE_ACTOR:-shuttle-smoke-1}"
+export SHUTTLE_TEST_APP="${SHUTTLE_TEST_APP:-}"
+
+_load_smoke_env() {
+  local f="${ATE_KIND_ENV:-${KIND_DIR}/smoke.env}"
+  if [[ -f "${f}" ]]; then
+    # shellcheck disable=SC1090
+    set -a
+    # shellcheck disable=SC1090
+    source "${f}"
+    set +a
+  fi
+}
+_load_smoke_env
+# Re-apply defaults after sourcing so empty file keys don't unset intentional exports.
+export SMOKE_BRANCH="${SMOKE_BRANCH:-shuttle/ate-kind-smoke}"
+export SMOKE_ACTOR="${SMOKE_ACTOR:-shuttle-smoke-1}"
+export SMOKE_REPO_URL="${SMOKE_REPO_URL:-}"
+export SHUTTLE_TEST_APP="${SHUTTLE_TEST_APP:-}"
 
 container() {
   # Prefer podman; fall back to docker only if explicitly requested.

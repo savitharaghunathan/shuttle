@@ -31,13 +31,12 @@ cat <<EOF
 Cluster is up.
 
 Next:
-  make ate-kind-smoke          # uses savitharaghunathan/test (no Anthropic key)
+  cp deploy/ate/kind/smoke.env.example deploy/ate/kind/smoke.env
+  # edit SMOKE_REPO_URL=https://github.com/OWNER/REPO.git
+  make ate-kind-smoke
   make ate-kind-port-forward   # gRPC :8443 and task proxy :8000
 
-Dogfood checkout: ${SHUTTLE_TEST_APP}
-Smoke remote:     ${SMOKE_REPO_URL}
-
-Example ${SHUTTLE_TEST_APP}/shuttle.yaml ate block:
+Example shuttle.yaml ate block:
   ate:
     endpoint: "127.0.0.1:8443"
     atespace: ${ATE_ATESPACE}

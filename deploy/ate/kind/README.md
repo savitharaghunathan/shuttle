@@ -10,6 +10,7 @@ smoke actor (no Anthropic key).
 - `kind` ≥ 0.20
 - `kubectl`, `go`, `git`, `curl`
 - Disk/time for ate-system install (several minutes, large image pulls)
+- An HTTPS git remote the cluster can clone/push (for smoke)
 
 ## Quick path
 
@@ -17,19 +18,36 @@ smoke actor (no Anthropic key).
 # from repo root (or the ate-remote-workers worktree)
 make ate-kind-up
 
-# smoke against savitharaghunathan/test (local checkout ~/local_dev/test)
-make ate-kind-smoke
+# configure your smoke target (do not commit secrets or private URLs you care about)
+cp deploy/ate/kind/smoke.env.example deploy/ate/kind/smoke.env
+# edit: SMOKE_REPO_URL=https://github.com/OWNER/REPO.git
 
+make ate-kind-smoke
 make ate-kind-down
 ```
 
-Defaults:
+Or pass the remote inline:
 
-- `SHUTTLE_TEST_APP=$HOME/local_dev/test`
-- `SMOKE_REPO_URL=https://github.com/savitharaghunathan/test.git`
-- `SMOKE_BRANCH=shuttle/ate-kind-smoke`
+```bash
+SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
+```
 
-Environment knobs (see `lib.sh`):
+## Smoke config
+
+| Source | How |
+|---|---|
+| `deploy/ate/kind/smoke.env` | Copied from `smoke.env.example` (gitignored) |
+| `ATE_KIND_ENV=/path/to/file` | Alternate env file |
+| Process environment | `SMOKE_REPO_URL`, `SMOKE_BRANCH`, … |
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `SMOKE_REPO_URL` | **yes** (for smoke) | _(none)_ | HTTPS git remote for the smoke actor |
+| `SMOKE_BRANCH` | no | `shuttle/ate-kind-smoke` | Branch the actor commits/pushes |
+| `SMOKE_ACTOR` | no | `shuttle-smoke-1` | Actor name |
+| `SHUTTLE_TEST_APP` | no | _(none)_ | Optional local checkout path (docs / serve) |
+
+## Cluster env knobs (see `lib.sh`)
 
 | Variable | Default | Meaning |
 |---|---|---|

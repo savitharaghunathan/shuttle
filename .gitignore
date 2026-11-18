@@ -4,3 +4,5 @@
 bin/
 /shuttle
 *.db
+deploy/ate/kind/smoke.env
+deploy/ate/kind/.generated-*.yaml
