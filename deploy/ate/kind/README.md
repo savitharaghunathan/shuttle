@@ -1,0 +1,70 @@
+# Local ate dogfood (kind + podman)
+
+Bring up Agent Substrate on a local kind cluster using **podman** as the kind
+provider, build shuttle actor images from **Containerfile**s, and run a shell-only
+smoke actor (no Anthropic key).
+
+## Prerequisites
+
+- `podman` (machine running on macOS)
+- `kind` ≥ 0.20
+- `kubectl`, `go`, `git`, `curl`
+- Disk/time for ate-system install (several minutes, large image pulls)
+
+## Quick path
+
+```bash
+# from repo root (or the ate-remote-workers worktree)
+make ate-kind-up
+
+# optional: smoke against a throwaway HTTPS repo the cluster can push to
+SMOKE_REPO_URL=https://github.com/org/throwaway.git make ate-kind-smoke
+
+make ate-kind-down
+```
+
+Environment knobs (see `lib.sh`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `KIND_EXPERIMENTAL_PROVIDER` | `podman` | kind container runtime |
+| `KIND_CLUSTER_NAME` | `shuttle-ate` | kind cluster name |
+| `KIND_REGISTRY_PORT` | `5001` | local image registry |
+| `ATE_SRC` | `~/.cache/shuttle/agent-substrate` | substrate checkout |
+| `ATE_REF` | `v1.0.0` | substrate tag |
+| `ATE_ATESPACE` | `shuttle` | ate atespace |
+
+## Scripts
+
+| Script | Role |
+|---|---|
+| `up.sh` | cluster → ate-system → build/push images → templates |
+| `down.sh` | delete cluster + registry |
+| `smoke.sh` | resume smoke actor + `POST /v1/tasks` |
+| `port-forward.sh` | API `:8443` + actor proxy `:8000` |
+| `create-cluster.sh` | kind+podman + local registry only |
+| `build-images.sh` | `podman build -f Containerfile` + push |
+
+## Images
+
+- Claude actor: `deploy/ate/workload/Containerfile` + `server.sh` / `handle.sh`
+- Smoke actor: `deploy/ate/kind/smoke-workload/Containerfile` (shell, no LLM)
+
+## shuttle.yaml for dogfood
+
+```yaml
+ate:
+  endpoint: "127.0.0.1:8443"
+  atespace: shuttle
+  actor_template: shuttle-smoke   # or shuttle-claude
+  task_url: "http://127.0.0.1:8000"
+  insecure: true
+```
+
+Then, with port-forwards running:
+
+```bash
+shuttle run --spec ./spec.md --agent claude --remote --headless
+```
+
+For Claude, set egress/credentials per https://ate.dev/docs/guides/egress-credential-injection/ and use `actor_template: shuttle-claude`.

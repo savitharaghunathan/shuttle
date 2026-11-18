@@ -26,7 +26,8 @@ TEST_APP_SCRIPTS := examples/scripts
 
 .PHONY: help build install run clean \
         lint test test-unit test-integration test-race verify \
-        serve-test-app smoke-test-app
+        serve-test-app smoke-test-app \
+        ate-kind-up ate-kind-down ate-kind-smoke ate-kind-port-forward ate-kind-build-images
 
 .DEFAULT_GOAL := help
 
@@ -79,3 +80,20 @@ smoke-test-app: build ## API recovery smoke; run serve-test-app in another termi
 	SHUTTLE_TEST_APP="$(SHUTTLE_TEST_APP)" SHUTTLE_BIN="$(CURDIR)/$(BIN)" \
 		ISSUE_URL="$(ISSUE_URL)" TEMPLATE="$(TEMPLATE)" AGENT="$(AGENT)" \
 		$(TEST_APP_SCRIPTS)/smoke-test-app.sh
+
+ATE_KIND := deploy/ate/kind
+
+ate-kind-up: ## kind+podman cluster, ate-system, actor images/templates
+	$(ATE_KIND)/up.sh
+
+ate-kind-down: ## tear down kind cluster + local registry
+	$(ATE_KIND)/down.sh
+
+ate-kind-build-images: ## podman build/push Containerfiles to kind registry
+	$(ATE_KIND)/build-images.sh
+
+ate-kind-smoke: ## resume smoke actor and POST /v1/tasks (needs SMOKE_REPO_URL)
+	$(ATE_KIND)/smoke.sh
+
+ate-kind-port-forward: ## API :8443 + actor proxy :8000 (Ctrl-C to stop)
+	$(ATE_KIND)/port-forward.sh
