@@ -48,7 +48,8 @@ log "Create/resume smoke actor ${ACTOR}"
 log "Port-forward API + start actor proxy in background"
 kubectl --context="${KUBECTL_CONTEXT}" -n ate-system port-forward svc/api 8443:443 >/tmp/shuttle-ate-api-pf.log 2>&1 &
 API_PF=$!
-"${ATECTL[@]}" proxy actor "${ACTOR}" -a "${ATE_ATESPACE}" --port 8000 >/tmp/shuttle-ate-proxy.log 2>&1 &
+# Workload listens on 8080 (not the proxy default remote port 80).
+"${ATECTL[@]}" proxy actor "${ACTOR}" -a "${ATE_ATESPACE}" 8000:8080 >/tmp/shuttle-ate-proxy.log 2>&1 &
 PROXY_PF=$!
 
 cleanup() {
@@ -57,21 +58,29 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Wait for proxy
+# Wait for proxy TCP (GET / may 404); fail if the proxy process dies.
+ready=0
 for _ in $(seq 1 60); do
-  if curl -sf -o /dev/null -w '' http://127.0.0.1:8000/ 2>/dev/null || true; then
-    break
+  if ! kill -0 "${PROXY_PF}" 2>/dev/null; then
+    echo "actor proxy exited early; see /tmp/shuttle-ate-proxy.log" >&2
+    cat /tmp/shuttle-ate-proxy.log >&2 || true
+    exit 1
   fi
-  # proxy may 404 on GET /; try until TCP accepts
   if (echo >/dev/tcp/127.0.0.1/8000) >/dev/null 2>&1; then
+    ready=1
     break
   fi
   sleep 1
 done
-sleep 2
+[[ "${ready}" -eq 1 ]] || {
+  echo "timed out waiting for actor proxy on :8000" >&2
+  cat /tmp/shuttle-ate-proxy.log >&2 || true
+  exit 1
+}
+sleep 1
 
 log "POST /v1/tasks"
-resp=$(curl -sf -X POST "http://127.0.0.1:8000/v1/tasks" \
+resp=$(curl -sf --max-time 180 -X POST "http://127.0.0.1:8000/v1/tasks" \
   -H "Content-Type: application/json" \
   -H "ate-target-actor: ${ATE_ATESPACE}/${ACTOR}" \
   -d "{\"prompt\":\"kind smoke\",\"branch\":\"${BRANCH}\",\"repo_url\":\"${REPO_URL}\"}")

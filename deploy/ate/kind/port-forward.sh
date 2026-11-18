@@ -35,5 +35,5 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 sleep 1
-log "Proxying actor ${ACTOR} → 127.0.0.1:8000 (blocks; Ctrl-C to stop)"
-"${ATECTL[@]}" proxy actor "${ACTOR}" -a "${ATE_ATESPACE}" --port 8000
+log "Proxying actor ${ACTOR} → 127.0.0.1:8000 → actor:8080 (blocks; Ctrl-C to stop)"
+"${ATECTL[@]}" proxy actor "${ACTOR}" -a "${ATE_ATESPACE}" 8000:8080
