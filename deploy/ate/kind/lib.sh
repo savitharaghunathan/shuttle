@@ -66,6 +66,25 @@ need() {
 
 log() { printf '==> %s\n' "$*"; }
 
+# go install lands in $(go env GOPATH)/bin (or GOBIN). Many interactive shells
+# omit that directory from PATH; ate kind scripts must still find kubectl-ate.
+ensure_gopath_bin() {
+  local gobin gopath bin
+  gobin="$(go env GOBIN 2>/dev/null || true)"
+  gopath="$(go env GOPATH 2>/dev/null || true)"
+  if [[ -n "${gobin}" ]]; then
+    bin="${gobin}"
+  elif [[ -n "${gopath}" ]]; then
+    bin="${gopath}/bin"
+  else
+    return 0
+  fi
+  case ":${PATH}:" in
+    *":${bin}:"*) ;;
+    *) export PATH="${bin}:${PATH}" ;;
+  esac
+}
+
 # ate-setup calls `docker info` and other docker CLI entrypoints. For podman
 # kind installs, prepend a shim so those calls hit podman instead.
 ensure_docker_shim() {

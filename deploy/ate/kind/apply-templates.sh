@@ -5,14 +5,15 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 need kubectl
-command -v kubectl-ate >/dev/null || command -v kubectl >/dev/null
+need go
+ensure_gopath_bin
 
 ATECTL=(kubectl ate)
 if ! kubectl ate --help >/dev/null 2>&1; then
   if command -v kubectl-ate >/dev/null; then
     ATECTL=(kubectl-ate)
   else
-    echo "kubectl-ate plugin missing; run ensure-substrate.sh" >&2
+    echo "kubectl-ate plugin missing; run ensure-substrate.sh (installs to $(go env GOPATH)/bin)" >&2
     exit 1
   fi
 fi
