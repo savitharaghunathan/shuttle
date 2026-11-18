@@ -31,10 +31,13 @@ cat <<EOF
 Cluster is up.
 
 Next:
-  make ate-kind-smoke          # control-plane + smoke actor task (no Anthropic key)
+  make ate-kind-smoke          # uses savitharaghunathan/test (no Anthropic key)
   make ate-kind-port-forward   # gRPC :8443 and task proxy :8000
 
-Example shuttle.yaml ate block:
+Dogfood checkout: ${SHUTTLE_TEST_APP}
+Smoke remote:     ${SMOKE_REPO_URL}
+
+Example ${SHUTTLE_TEST_APP}/shuttle.yaml ate block:
   ate:
     endpoint: "127.0.0.1:8443"
     atespace: ${ATE_ATESPACE}

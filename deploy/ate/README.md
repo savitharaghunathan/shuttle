@@ -10,7 +10,7 @@ Preferred path for development:
 
 ```bash
 make ate-kind-up
-SMOKE_REPO_URL=https://github.com/org/throwaway.git make ate-kind-smoke
+make ate-kind-smoke   # uses https://github.com/savitharaghunathan/test.git
 make ate-kind-down
 ```
 

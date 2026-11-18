@@ -21,6 +21,12 @@ export ATE_ATESPACE="${ATE_ATESPACE:-shuttle}"
 export ATE_TEMPLATE="${ATE_TEMPLATE:-shuttle-claude}"
 export ATE_SMOKE_TEMPLATE="${ATE_SMOKE_TEMPLATE:-shuttle-smoke}"
 
+# Default dogfood target: Savitha's local shuttle test app / GitHub repo.
+export SHUTTLE_TEST_APP="${SHUTTLE_TEST_APP:-${HOME}/local_dev/test}"
+export SMOKE_REPO_URL="${SMOKE_REPO_URL:-https://github.com/savitharaghunathan/test.git}"
+export SMOKE_BRANCH="${SMOKE_BRANCH:-shuttle/ate-kind-smoke}"
+export SMOKE_ACTOR="${SMOKE_ACTOR:-shuttle-smoke-1}"
+
 container() {
   # Prefer podman; fall back to docker only if explicitly requested.
   if [[ "${KIND_EXPERIMENTAL_PROVIDER}" == "podman" ]]; then

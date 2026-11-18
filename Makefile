@@ -92,7 +92,7 @@ ate-kind-down: ## tear down kind cluster + local registry
 ate-kind-build-images: ## podman build/push Containerfiles to kind registry
 	$(ATE_KIND)/build-images.sh
 
-ate-kind-smoke: ## resume smoke actor and POST /v1/tasks (needs SMOKE_REPO_URL)
+ate-kind-smoke: ## resume smoke actor and POST /v1/tasks (defaults to ~/local_dev/test repo)
 	$(ATE_KIND)/smoke.sh
 
 ate-kind-port-forward: ## API :8443 + actor proxy :8000 (Ctrl-C to stop)

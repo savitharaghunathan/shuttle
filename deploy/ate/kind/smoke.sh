@@ -8,14 +8,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need kubectl
 need curl
 
-ACTOR="${SMOKE_ACTOR:-shuttle-smoke-1}"
-BRANCH="${SMOKE_BRANCH:-shuttle/ate-kind-smoke}"
-REPO_URL="${SMOKE_REPO_URL:-}"
+ACTOR="${SMOKE_ACTOR}"
+BRANCH="${SMOKE_BRANCH}"
+REPO_URL="${SMOKE_REPO_URL}"
 if [[ -z "${REPO_URL}" ]]; then
-  echo "Set SMOKE_REPO_URL to a git remote the actor can clone/push (HTTPS)." >&2
-  echo "Example: SMOKE_REPO_URL=https://github.com/org/throwaway.git make ate-kind-smoke" >&2
+  echo "SMOKE_REPO_URL is empty (expected https://github.com/savitharaghunathan/test.git)." >&2
   exit 1
 fi
+log "Using test repo ${REPO_URL} (local checkout: ${SHUTTLE_TEST_APP})"
 
 ATECTL=(kubectl ate)
 kubectl ate --help >/dev/null 2>&1 || ATECTL=(kubectl-ate)

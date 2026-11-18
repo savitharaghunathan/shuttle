@@ -17,11 +17,17 @@ smoke actor (no Anthropic key).
 # from repo root (or the ate-remote-workers worktree)
 make ate-kind-up
 
-# optional: smoke against a throwaway HTTPS repo the cluster can push to
-SMOKE_REPO_URL=https://github.com/org/throwaway.git make ate-kind-smoke
+# smoke against savitharaghunathan/test (local checkout ~/local_dev/test)
+make ate-kind-smoke
 
 make ate-kind-down
 ```
+
+Defaults:
+
+- `SHUTTLE_TEST_APP=$HOME/local_dev/test`
+- `SMOKE_REPO_URL=https://github.com/savitharaghunathan/test.git`
+- `SMOKE_BRANCH=shuttle/ate-kind-smoke`
 
 Environment knobs (see `lib.sh`):
 
