@@ -71,6 +71,8 @@ Explicit import stays the default; auto-import is opt-in behavior for faster ite
 ### Remote workers
 Run agent stages on another machine or pool while keeping the control plane local.
 
+**In progress (`feat/ate-remote-workers`):** Agent Substrate ([ate.dev](https://ate.dev)) integration — `--remote` runs agent stages on sticky Claude actors via gRPC Control API + HTTP task API; local `test`/`open_pr`/gates stay local; no local CLI fallback. See `docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md`.
+
 ### Team / shared factory
 Multi-user registry, auth, and shared run history — beyond single-user local trust boundary.
 
@@ -82,7 +84,7 @@ Share and overlay pipeline templates across repos (`pipelines/` today is local-o
 ## Out of scope (for now)
 
 - Multi-tenant auth / SSO
-- Vendor SDKs in core (agents stay CLI-invoked)
+- Vendor SDKs in core (agents stay CLI-invoked locally; remote mode uses ate gRPC + OCI actors)
 - Concurrent writers to the same `.shuttle/shuttle.db`
 
 ---
