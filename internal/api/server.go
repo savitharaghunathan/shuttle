@@ -28,23 +28,27 @@ type Options struct {
 	// Leave nil in production.
 	LookupRepo func(owner, name string) (string, error)
 	FetchSpec  func(ctx context.Context, owner, name string, number int) (string, error)
+	// EnableRemote prepares the engine registry for ate-backed agent stages.
+	EnableRemote func(ctx context.Context) error
 }
 
 type Server struct {
-	engine      *pipeline.Engine
-	cwd         string
-	pipelineIDs []string
-	lookupRepo  func(owner, name string) (string, error)
-	fetchSpec   func(ctx context.Context, owner, name string, number int) (string, error)
+	engine       *pipeline.Engine
+	cwd          string
+	pipelineIDs  []string
+	lookupRepo   func(owner, name string) (string, error)
+	fetchSpec    func(ctx context.Context, owner, name string, number int) (string, error)
+	enableRemote func(ctx context.Context) error
 }
 
 func NewHandler(engine *pipeline.Engine, opts Options) http.Handler {
 	s := &Server{
-		engine:      engine,
-		cwd:         opts.CWD,
-		pipelineIDs: append([]string(nil), opts.PipelineIDs...),
-		lookupRepo:  opts.LookupRepo,
-		fetchSpec:   opts.FetchSpec,
+		engine:       engine,
+		cwd:          opts.CWD,
+		pipelineIDs:  append([]string(nil), opts.PipelineIDs...),
+		lookupRepo:   opts.LookupRepo,
+		fetchSpec:    opts.FetchSpec,
+		enableRemote: opts.EnableRemote,
 	}
 
 	r := chi.NewRouter()
@@ -69,6 +73,7 @@ type createRunRequest struct {
 	Model      string `json:"model,omitempty"`
 	IssueURL   string `json:"issue_url,omitempty"`
 	Headless   bool   `json:"headless,omitempty"`
+	Remote     bool   `json:"remote,omitempty"`
 }
 
 type decisionRequest struct {
@@ -86,6 +91,7 @@ type runResponse struct {
 	Model       string          `json:"model,omitempty"`
 	IssueRef    string          `json:"issue_ref,omitempty"`
 	ParentRunID string          `json:"parent_run_id,omitempty"`
+	Remote      bool            `json:"remote,omitempty"`
 	OutputsMode string          `json:"outputs_mode,omitempty"`
 	Warnings    []string        `json:"warnings,omitempty"`
 	Stages      []stageResponse `json:"stages"`
@@ -149,6 +155,17 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Remote {
+		if s.enableRemote == nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("remote mode is not configured on this server"))
+			return
+		}
+		if err := s.enableRemote(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+
 	runID, err := s.engine.StartRun(r.Context(), pipeline.StartParams{
 		TemplateID:  templateID,
 		Pipeline:    pl,
@@ -158,6 +175,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		Agent:       req.Agent,
 		Model:       req.Model,
 		IssueRef:    in.IssueRef,
+		Remote:      req.Remote,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -256,10 +274,28 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	s.writeRun(w, http.StatusOK, id)
 }
 
+func (s *Server) ensureRemoteRun(ctx context.Context, runID string) error {
+	run, err := s.engine.Store.GetRun(runID)
+	if err != nil {
+		return err
+	}
+	if !run.Remote {
+		return nil
+	}
+	if s.enableRemote == nil {
+		return fmt.Errorf("remote mode is not configured on this server")
+	}
+	return s.enableRemote(ctx)
+}
+
 func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 	id, err := s.engine.Store.ResolveRunID(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, httpStatusForError(err), err)
+		return
+	}
+	if err := s.ensureRemoteRun(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	if err := s.engine.ResumeRun(r.Context(), id); err != nil {
@@ -273,6 +309,10 @@ func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 	id, err := s.engine.Store.ResolveRunID(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, httpStatusForError(err), err)
+		return
+	}
+	if err := s.ensureRemoteRun(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	var req retryRequest
@@ -334,6 +374,10 @@ func (s *Server) decideRun(w http.ResponseWriter, r *http.Request, approve bool)
 	runID, err := s.engine.Store.ResolveRunID(raw)
 	if err != nil {
 		writeError(w, httpStatusForError(err), err)
+		return
+	}
+	if err := s.ensureRemoteRun(r.Context(), runID); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	if approve {
@@ -444,6 +488,7 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 		Model        string `json:"model"`
 		TemplateID   string `json:"template_id"`
 		IssueRef     string `json:"issue_ref,omitempty"`
+		Remote       bool   `json:"remote,omitempty"`
 		CreatedAt    string `json:"created_at"`
 		UpdatedAt    string `json:"updated_at"`
 		WallDuration int64  `json:"wall_duration"`
@@ -475,6 +520,7 @@ func (s *Server) runsToJSON(runs []store.Run) []any {
 			Model:       run.Model,
 			TemplateID:  run.TemplateID,
 			IssueRef:    run.IssueRef,
+			Remote:      run.Remote,
 			CreatedAt:   run.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt:   run.UpdatedAt.UTC().Format(time.RFC3339),
 			WallDuration: int64(func() int64 {
@@ -519,6 +565,7 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		Model:       run.Model,
 		IssueRef:    run.IssueRef,
 		ParentRunID: run.ParentRunID,
+		Remote:      run.Remote,
 		OutputsMode: outputsMode,
 		Warnings:    s.engine.StartWarnings(runID),
 		Stages:      make([]stageResponse, 0, len(stages)),

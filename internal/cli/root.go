@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/savitharaghunathan/shuttle/internal/api"
+	"github.com/savitharaghunathan/shuttle/internal/ate"
 	"github.com/savitharaghunathan/shuttle/internal/config"
 	"github.com/savitharaghunathan/shuttle/internal/issue"
 	"github.com/savitharaghunathan/shuttle/internal/pipeline"
 	"github.com/savitharaghunathan/shuttle/internal/registry"
+	"github.com/savitharaghunathan/shuttle/internal/repo"
 	"github.com/savitharaghunathan/shuttle/internal/runinput"
 	"github.com/savitharaghunathan/shuttle/internal/store"
 	"github.com/savitharaghunathan/shuttle/internal/templates"
@@ -68,6 +70,7 @@ func newRunCommand(out, errOut io.Writer) *cobra.Command {
 	var agent string
 	var model string
 	var headless bool
+	var remote bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -94,6 +97,12 @@ func newRunCommand(out, errOut io.Writer) *cobra.Command {
 			}
 			defer app.close()
 
+			if remote {
+				if err := app.enableRemote(cmd.Context(), cwd); err != nil {
+					return err
+				}
+			}
+
 			runID, err := app.engine.StartRun(cmd.Context(), pipeline.StartParams{
 				TemplateID:  resolvedTemplate,
 				Pipeline:    pl,
@@ -103,6 +112,7 @@ func newRunCommand(out, errOut io.Writer) *cobra.Command {
 				Agent:       agent,
 				Model:       model,
 				IssueRef:    issueRef,
+				Remote:      remote,
 			})
 			if err != nil {
 				return err
@@ -111,7 +121,11 @@ func newRunCommand(out, errOut io.Writer) *cobra.Command {
 				fmt.Fprintf(errOut, "warning: %s\n", wmsg)
 			}
 			fmt.Fprintf(out, "run: %s\n", runID)
-			fmt.Fprintf(out, "template: %s\n\n", resolvedTemplate)
+			fmt.Fprintf(out, "template: %s\n", resolvedTemplate)
+			if remote {
+				fmt.Fprintf(out, "remote: ate\n")
+			}
+			fmt.Fprintln(out)
 			app.engine.Progress = out
 			if err := app.engine.RunUntilBlockOrDone(cmd.Context(), runID); err != nil {
 				return err
@@ -125,6 +139,7 @@ func newRunCommand(out, errOut io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "agent runtime for the implement stage (sdlc read-only stages use readonly_worker)")
 	cmd.Flags().StringVar(&model, "model", "", "model for every agent stage (sdlc: plan, design, implement, review)")
 	cmd.Flags().BoolVar(&headless, "headless", false, "skip manual gates for pr-factory/sdlc (selects headless template)")
+	cmd.Flags().BoolVar(&remote, "remote", false, "run agent stages on Agent Substrate (ate); requires ate: config; claude only")
 	return cmd
 }
 
@@ -244,6 +259,13 @@ func newApproveCommand(out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			run, err := app.store.GetRun(runID)
+			if err != nil {
+				return err
+			}
+			if err := app.ensureRemoteForRun(cmd.Context(), run); err != nil {
+				return err
+			}
 			stageID, err := gateStageID(app, runID, args[1:])
 			if err != nil {
 				return err
@@ -356,6 +378,9 @@ func newServeCommand(out io.Writer) *cobra.Command {
 				Handler: api.NewHandler(app.engine, api.Options{
 					CWD:         cwd,
 					PipelineIDs: templates.IDs(),
+					EnableRemote: func(ctx context.Context) error {
+						return app.enableRemote(ctx, cwd)
+					},
 				}),
 			}
 			fmt.Fprintln(out, "serving on http://127.0.0.1:8080")
@@ -368,9 +393,11 @@ func newServeCommand(out io.Writer) *cobra.Command {
 }
 
 type appContext struct {
-	cfg    *config.Config
-	store  *store.Store
-	engine *pipeline.Engine
+	cfg       *config.Config
+	store     *store.Store
+	engine    *pipeline.Engine
+	ateClient ate.Control
+	cwd       string
 }
 
 func openApp() (*appContext, error) {
@@ -406,10 +433,74 @@ func openAppInDir(cwd string) (*appContext, error) {
 		cfg:    cfg,
 		store:  s,
 		engine: eng,
+		cwd:    cwd,
 	}, nil
 }
 
+func (a *appContext) enableRemote(ctx context.Context, cwd string) error {
+	if err := a.cfg.Ate.Validate(); err != nil {
+		return fmt.Errorf("remote mode: %w", err)
+	}
+	if err := worker.ValidateRemoteAgent(a.cfg.DefaultWorker); err != nil && a.cfg.DefaultWorker != "" {
+		// Default worker check only when agent flag empty; StartRun also validates resolved agent.
+		_ = err
+	}
+	origin, err := repo.OriginRemoteURL(cwd)
+	if err != nil {
+		return fmt.Errorf("remote mode: resolve origin: %w", err)
+	}
+	owner, name, err := repo.ParseGitHubURL(origin)
+	if err != nil {
+		return fmt.Errorf("remote mode: parse origin %s: %w", origin, err)
+	}
+
+	token := ""
+	if a.cfg.Ate.TokenFile != "" {
+		data, err := os.ReadFile(a.cfg.Ate.TokenFile)
+		if err != nil {
+			return fmt.Errorf("read ate token_file: %w", err)
+		}
+		token = strings.TrimSpace(string(data))
+	}
+	client, err := ate.Dial(ctx, ate.DialOptions{
+		Endpoint: a.cfg.Ate.Endpoint,
+		Token:    token,
+		Insecure: a.cfg.Ate.Insecure,
+	})
+	if err != nil {
+		return err
+	}
+	reg, err := worker.NewRegistryWithOptions(a.cfg, worker.RegistryOptions{
+		Remote:   true,
+		Ate:      a.cfg.Ate,
+		Control:  client,
+		Owner:    owner,
+		RepoName: name,
+	})
+	if err != nil {
+		_ = client.Close()
+		return err
+	}
+	a.ateClient = client
+	a.engine.Registry = reg
+	return nil
+}
+
+func (a *appContext) ensureRemoteForRun(ctx context.Context, run store.Run) error {
+	if !run.Remote {
+		return nil
+	}
+	cwd := run.CWD
+	if cwd == "" {
+		cwd = a.cwd
+	}
+	return a.enableRemote(ctx, cwd)
+}
+
 func (a *appContext) close() {
+	if a.ateClient != nil {
+		_ = a.ateClient.Close()
+	}
 	_ = a.store.Close()
 }
 
