@@ -24,17 +24,14 @@ log "Ensuring atespace ${ATE_ATESPACE}"
 smoke_tmpl="${KIND_DIR}/.generated-smoke-template.yaml"
 claude_tmpl="${KIND_DIR}/.generated-claude-template.yaml"
 
+# Manifests are protojson-shaped ateapi.ActorTemplate (image is a string).
 cat >"${smoke_tmpl}" <<EOF
 metadata:
   atespace: ${ATE_ATESPACE}
   name: ${ATE_SMOKE_TEMPLATE}
 containers:
-  - name: agent
-    image:
-      reference: ${SHUTTLE_SMOKE_IMAGE}
-    ports:
-      - name: http
-        containerPort: 8080
+- name: agent
+  image: ${SHUTTLE_SMOKE_IMAGE}
 resources:
   limits:
     cpuMillicores: 500
@@ -48,12 +45,8 @@ metadata:
   atespace: ${ATE_ATESPACE}
   name: ${ATE_TEMPLATE}
 containers:
-  - name: agent
-    image:
-      reference: ${SHUTTLE_ACTOR_IMAGE}
-    ports:
-      - name: http
-        containerPort: 8080
+- name: agent
+  image: ${SHUTTLE_ACTOR_IMAGE}
 resources:
   limits:
     cpuMillicores: 2000

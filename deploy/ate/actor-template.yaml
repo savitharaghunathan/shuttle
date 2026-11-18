@@ -1,19 +1,12 @@
 # ProtoJSON-shaped ActorTemplate for kubectl ate create actor-template -f …
-# Replace IMAGE with a digest-pinned reference to deploy/ate/workload.
-#
-# metadata:
-#   atespace: shuttle
-#   name: shuttle-claude
+# Replace IMAGE_REPLACE_ME with a digest-pinned (or tag) reference to the
+# deploy/ate/workload image.
 metadata:
   atespace: shuttle
   name: shuttle-claude
 containers:
-  - name: agent
-    image:
-      reference: IMAGE_REPLACE_ME
-    ports:
-      - name: http
-        containerPort: 8080
+- name: agent
+  image: IMAGE_REPLACE_ME
 resources:
   limits:
     cpuMillicores: 2000
