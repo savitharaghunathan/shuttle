@@ -12,9 +12,12 @@ smoke actor (no Anthropic key).
 - Disk/time for ate-system install (several minutes, large image pulls)
 - An HTTPS git remote the cluster can clone/push (for smoke)
 
-**Podman note:** Agent Substrate’s `ate-setup` hardcodes `docker info`. Our
-scripts prepend a `docker`→`podman` shim on `PATH` so kind+podman installs work
-without Docker Desktop.
+**Podman notes:**
+- Agent Substrate’s `ate-setup` hardcodes the docker CLI (including
+  `docker buildx build --push` for envoy-dataplane). Scripts prepend a
+  `docker`→`podman` shim that translates those calls.
+- Install uses `--sandbox-classes=gvisor` so kind skips the multi‑GB kata/microVM
+  download (shuttle remote workers use gVisor).
 
 ## Quick path
 
