@@ -40,6 +40,20 @@ claude_tmpl="${KIND_DIR}/.generated-claude-template.yaml"
 # Manifests are protojson-shaped ateapi.ActorTemplate (image is a string).
 # workerSelector matches deploy/ate/kind/workerpool.yaml labels.
 # Resource limits must fit the WorkerPool template capacity (1 CPU / 1Gi).
+# Trust bundle so HTTPS through atenet-egress MITM verifies (git/curl/claude).
+trust_volumes=$(cat <<'YAML'
+volumes:
+- name: system-info
+  systemInfo:
+    dataSources:
+    - trustBundle:
+        names:
+        - egress-mitm.ate.dev
+        - system-roots.ate.dev
+        path: egress-trust-bundle/trust-bundle.pem
+YAML
+)
+
 cat >"${smoke_tmpl}" <<EOF
 metadata:
   atespace: ${ATE_ATESPACE}
@@ -50,6 +64,14 @@ workerSelector:
 containers:
 - name: agent
   image: ${SHUTTLE_SMOKE_IMAGE}
+  env:
+  - name: SSL_CERT_FILE
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  - name: GIT_SSL_CAINFO
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  volumeMounts:
+  - name: system-info
+    mountPath: /run/ate
 resources:
   limits:
     cpuMillicores: 500
@@ -58,6 +80,7 @@ snapshotConfig:
   preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
   goldenSnapshotConfig:
     mode: GOLDEN_SNAPSHOT_MODE_DISABLED
+${trust_volumes}
 EOF
 
 cat >"${claude_tmpl}" <<EOF
@@ -70,6 +93,16 @@ workerSelector:
 containers:
 - name: agent
   image: ${SHUTTLE_ACTOR_IMAGE}
+  env:
+  - name: SSL_CERT_FILE
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  - name: GIT_SSL_CAINFO
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  - name: NODE_EXTRA_CA_CERTS
+    value: /run/ate/egress-trust-bundle/trust-bundle.pem
+  volumeMounts:
+  - name: system-info
+    mountPath: /run/ate
 resources:
   limits:
     cpuMillicores: 500
@@ -78,6 +111,7 @@ snapshotConfig:
   preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
   goldenSnapshotConfig:
     mode: GOLDEN_SNAPSHOT_MODE_DISABLED
+${trust_volumes}
 EOF
 
 log "Creating actor templates (delete+recreate if immutable)"
