@@ -11,6 +11,10 @@ need kubectl
 export ATE_INSTALL_KIND=true
 export KO_DOCKER_REPO
 export KIND_EXPERIMENTAL_PROVIDER
+export KUBECTL_CONTEXT
+
+# Cluster is already created by create-cluster.sh; ate-setup still probes docker.
+ensure_docker_shim
 
 log "Deploying ate-system (this can take several minutes)"
 (

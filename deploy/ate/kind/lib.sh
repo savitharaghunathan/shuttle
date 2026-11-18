@@ -65,3 +65,24 @@ need() {
 }
 
 log() { printf '==> %s\n' "$*"; }
+
+# ate-setup calls `docker info` and other docker CLI entrypoints. For podman
+# kind installs, prepend a shim so those calls hit podman instead.
+ensure_docker_shim() {
+  if [[ "${KIND_EXPERIMENTAL_PROVIDER}" != "podman" ]]; then
+    return 0
+  fi
+  local shim_dir="${KIND_DIR}/.bin"
+  mkdir -p "${shim_dir}"
+  # Named exactly `docker` so exec.LookPath("docker") finds it.
+  cp "${KIND_DIR}/docker-shim.sh" "${shim_dir}/docker"
+  chmod +x "${shim_dir}/docker"
+  export PATH="${shim_dir}:${PATH}"
+  if ! docker info >/dev/null 2>&1; then
+    echo "podman docker-shim failed \`docker info\`. Is the podman machine running?" >&2
+    echo "  podman machine start" >&2
+    docker info >&2 || true
+    exit 1
+  fi
+  log "Using podman via PATH docker shim (${shim_dir}/docker)"
+}

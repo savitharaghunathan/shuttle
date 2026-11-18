@@ -6,11 +6,15 @@ smoke actor (no Anthropic key).
 
 ## Prerequisites
 
-- `podman` (machine running on macOS)
+- `podman` (machine running on macOS: `podman machine start`)
 - `kind` ≥ 0.20
 - `kubectl`, `go`, `git`, `curl`
 - Disk/time for ate-system install (several minutes, large image pulls)
 - An HTTPS git remote the cluster can clone/push (for smoke)
+
+**Podman note:** Agent Substrate’s `ate-setup` hardcodes `docker info`. Our
+scripts prepend a `docker`→`podman` shim on `PATH` so kind+podman installs work
+without Docker Desktop.
 
 ## Quick path
 

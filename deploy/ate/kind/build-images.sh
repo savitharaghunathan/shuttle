@@ -5,6 +5,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 need podman
+ensure_docker_shim
 
 build_and_push() {
   local containerfile="$1"
