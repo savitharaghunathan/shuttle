@@ -21,8 +21,10 @@ log "Deploying ate-system (this can take several minutes)"
   cd "${ATE_SRC}"
   # Prefer a credential provider that works for local kind testing.
   # gVisor-only: skip kata-static / microVM asset download (large, unused here).
-  # docker→podman shim handles `docker buildx build --push` for envoy-dataplane.
+  # Use release images instead of building ate-system images locally.
   go run ./cmd/ate-setup deploy ate-system \
+    --image-repo "${ATE_IMAGE_REPO}" \
+    --image-tag "${ATE_IMAGE_TAG}" \
     --sandbox-classes=gvisor \
     --credential-provider='{"name":"k8s.io"}' \
     --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client

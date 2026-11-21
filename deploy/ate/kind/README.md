@@ -9,15 +9,16 @@ smoke actor (no Anthropic key).
 - `podman` (machine running on macOS: `podman machine start`)
 - `kind` ≥ 0.20
 - `kubectl`, `go`, `git`, `curl`
-- Disk/time for ate-system install (several minutes, large image pulls)
+- Disk/time for ate-system install (several minutes, GHCR image pulls)
 - An HTTPS git remote the cluster can clone/push (for smoke)
 
 **Podman notes:**
-- Agent Substrate’s `ate-setup` hardcodes the docker CLI (including
-  `docker buildx build --push` for envoy-dataplane). Scripts prepend a
-  `docker`→`podman` shim that translates those calls.
+- Agent Substrate’s `ate-setup` may probe the docker CLI. Scripts prepend a
+  `docker`→`podman` shim so those calls work with podman.
 - Install uses `--sandbox-classes=gvisor` so kind skips the multi‑GB kata/microVM
   download (shuttle remote workers use gVisor).
+- Existing clusters need `make ate-kind-down` then `make ate-kind-up` to pick up
+  updated Agent Substrate image pins.
 
 ## Quick path
 
@@ -62,7 +63,11 @@ SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
 | `KIND_CLUSTER_NAME` | `shuttle-ate` | kind cluster name |
 | `KIND_REGISTRY_PORT` | `5001` | local image registry |
 | `ATE_SRC` | `~/.cache/shuttle/agent-substrate` | substrate checkout |
-| `ATE_REF` | `v1.0.0` | substrate tag |
+| `ATE_REF` | `v1.0.1` | substrate tag |
+| `ATE_IMAGE_REPO` | `ghcr.io/agent-substrate/substrate` | prebuilt repo |
+| `ATE_IMAGE_TAG` | `$ATE_REF` | prebuilt tag |
+| `ATE_WORKER_IMAGE` | _(resolved)_ | optional full digest-pinned worker override |
+| `ATE_WORKER_IMAGE_NAME` | `ateworker-gvisor` | image name under the repo |
 | `ATE_ATESPACE` | `shuttle` | ate atespace |
 
 ## Scripts
@@ -70,7 +75,7 @@ SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
 | Script | Role |
 |---|---|
 | `up.sh` | cluster → ate-system → images → WorkerPool → templates |
-| `apply-workerpool.sh` | `ko build` ateworker-gvisor + apply `WorkerPool` |
+| `apply-workerpool.sh` | resolve the GHCR `ateworker-gvisor` digest + apply `WorkerPool` |
 | `down.sh` | delete cluster + registry |
 | `smoke.sh` | resume smoke actor + `POST /v1/tasks` |
 | `port-forward.sh` | API `:8443` + actor proxy `:8000` |
@@ -79,6 +84,12 @@ SMOKE_REPO_URL=https://github.com/OWNER/REPO.git make ate-kind-smoke
 
 ## Images
 
+- ate-system uses prebuilt release images under
+  `ghcr.io/agent-substrate/substrate` with tag `v1.0.1`.
+- WorkerPool uses the published `ateworker-gvisor` image under the same repo,
+  resolved to an `@sha256:` digest at apply time. Set `ATE_WORKER_IMAGE` to a
+  full digest-pinned image ref to override it. The worker is no longer built
+  with `ko` by default.
 - Claude actor: `deploy/ate/workload/Containerfile` + `server.sh` / `handle.sh`
 - Smoke actor: `deploy/ate/kind/smoke-workload/Containerfile` (shell, no LLM)
 

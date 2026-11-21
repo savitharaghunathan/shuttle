@@ -12,7 +12,12 @@ export KIND_REGISTRY_NAME="${KIND_REGISTRY_NAME:-kind-registry}"
 export KIND_REGISTRY_PORT="${KIND_REGISTRY_PORT:-5001}"
 export KUBECTL_CONTEXT="kind-${KIND_CLUSTER_NAME}"
 export ATE_SRC="${ATE_SRC:-${HOME}/.cache/shuttle/agent-substrate}"
-export ATE_REF="${ATE_REF:-v1.0.0}"
+export ATE_REF="${ATE_REF:-v1.0.1}"
+export ATE_IMAGE_REPO="${ATE_IMAGE_REPO:-ghcr.io/agent-substrate/substrate}"
+export ATE_IMAGE_TAG="${ATE_IMAGE_TAG:-${ATE_REF}}"
+# Optional override for WorkerPool.spec.workerImage (must be digest-pinned).
+export ATE_WORKER_IMAGE="${ATE_WORKER_IMAGE:-}"
+export ATE_WORKER_IMAGE_NAME="${ATE_WORKER_IMAGE_NAME:-ateworker-gvisor}"
 export ATE_INSTALL_KIND=true
 # Kind nodes pull via the localhost:PORT containerd mirror. Never use 127.0.0.1
 # here — inside a node that address is the node itself, not the registry.
