@@ -89,8 +89,25 @@ func (w *AteAgent) Execute(ctx context.Context, req Request) (Result, error) {
 	if _, err := ate.EnsureActor(ctx, w.control, w.cfg.Atespace, actorName, w.cfg.ActorTemplate); err != nil {
 		return Result{Status: StatusFailed}, err
 	}
-	if _, err := w.control.ResumeActor(ctx, w.cfg.Atespace, actorName); err != nil {
-		return Result{Status: StatusFailed}, fmt.Errorf("resume actor: %w", err)
+	backoff := ate.DefaultResumeBackoff()
+	var resumeErr error
+	for attempt := 0; attempt < ate.DefaultResumeAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return Result{Status: StatusFailed}, err
+		}
+		_, resumeErr = w.control.ResumeActor(ctx, w.cfg.Atespace, actorName)
+		if resumeErr == nil {
+			break
+		}
+		if !ate.IsRetryableResume(resumeErr) || attempt+1 >= ate.DefaultResumeAttempts {
+			break
+		}
+		if err := backoff.Wait(ctx, attempt); err != nil {
+			return Result{Status: StatusFailed}, err
+		}
+	}
+	if resumeErr != nil {
+		return Result{Status: StatusFailed}, fmt.Errorf("resume actor: %w", resumeErr)
 	}
 
 	log := req.Output

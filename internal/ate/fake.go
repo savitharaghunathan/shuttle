@@ -16,6 +16,7 @@ type FakeControl struct {
 	Actors map[string]*ateapi.Actor // key: atespace/name
 
 	ResumeErr  error
+	ResumeErrs []error
 	SuspendErr error
 	CreateErr  error
 	GetErr     error
@@ -66,7 +67,13 @@ func (f *FakeControl) ResumeActor(_ context.Context, atespace, name string) (*at
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Resumes++
-	if f.ResumeErr != nil {
+	if len(f.ResumeErrs) > 0 {
+		err := f.ResumeErrs[0]
+		f.ResumeErrs = f.ResumeErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	} else if f.ResumeErr != nil {
 		return nil, f.ResumeErr
 	}
 	a, ok := f.Actors[key(atespace, name)]

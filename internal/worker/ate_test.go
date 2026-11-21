@@ -10,6 +10,8 @@ import (
 
 	"github.com/savitharaghunathan/shuttle/internal/ate"
 	"github.com/savitharaghunathan/shuttle/internal/worker"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestAteAgentHappyPath(t *testing.T) {
@@ -80,6 +82,74 @@ func TestAteAgentRejectsOtherAgent(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "claude") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAteAgentRetriesResourceExhaustedResume(t *testing.T) {
+	fake := ate.NewFakeControl()
+	fake.ResumeErrs = []error{
+		status.Error(codes.ResourceExhausted, "no room"),
+		nil,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(ate.TaskResponse{Status: "succeeded", Summary: "ok"})
+	}))
+	defer srv.Close()
+	agent, err := worker.NewAteAgent(worker.AteAgentOptions{
+		Config: ate.Config{
+			Endpoint: "localhost:1", Atespace: "shuttle",
+			ActorTemplate: "shuttle-claude", TaskURL: srv.URL,
+		},
+		Control: fake, Owner: "acme", RepoName: "widget",
+		Tasks:      &ate.TaskClient{BaseURL: srv.URL, Atespace: "shuttle", HTTPClient: srv.Client()},
+		SyncBranch: func(string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = agent.Execute(context.Background(), worker.Request{
+		Agent: "claude", Prompt: "x", Branch: "shuttle/issue-1",
+		RepoURL: "https://github.com/acme/widget.git", WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.Resumes != 2 {
+		t.Fatalf("resumes=%d", fake.Resumes)
+	}
+}
+
+func TestAteAgentRetriesAbortedResume(t *testing.T) {
+	fake := ate.NewFakeControl()
+	fake.ResumeErrs = []error{
+		status.Error(codes.Aborted, "resume already in progress"),
+		nil,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(ate.TaskResponse{Status: "succeeded", Summary: "ok"})
+	}))
+	defer srv.Close()
+	agent, err := worker.NewAteAgent(worker.AteAgentOptions{
+		Config: ate.Config{
+			Endpoint: "localhost:1", Atespace: "shuttle",
+			ActorTemplate: "shuttle-claude", TaskURL: srv.URL,
+		},
+		Control: fake, Owner: "acme", RepoName: "widget",
+		Tasks:      &ate.TaskClient{BaseURL: srv.URL, Atespace: "shuttle", HTTPClient: srv.Client()},
+		SyncBranch: func(string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = agent.Execute(context.Background(), worker.Request{
+		Agent: "claude", Prompt: "x", Branch: "shuttle/issue-1",
+		RepoURL: "https://github.com/acme/widget.git", WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.Resumes != 2 {
+		t.Fatalf("resumes=%d", fake.Resumes)
 	}
 }
 
