@@ -19,6 +19,7 @@ import (
 	"github.com/savitharaghunathan/shuttle/internal/registry"
 	"github.com/savitharaghunathan/shuttle/internal/runinput"
 	"github.com/savitharaghunathan/shuttle/internal/store"
+	"github.com/savitharaghunathan/shuttle/internal/ui"
 )
 
 type Options struct {
@@ -63,6 +64,7 @@ func NewHandler(engine *pipeline.Engine, opts Options) http.Handler {
 	r.Post("/v1/runs/{id}/reject", s.rejectRun)
 	r.Get("/v1/runs/{id}/stages/{stage_id}/log", s.getStageLog)
 	r.Get("/v1/pipelines", s.listPipelines)
+	r.Mount("/", ui.Handler())
 	return r
 }
 

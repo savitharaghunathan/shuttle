@@ -948,3 +948,32 @@ func TestGetStageLogReturnsTextWithTruncatedHeader(t *testing.T) {
 		t.Fatalf("body len=%d want %d", resp.Body.Len(), api.MaxLogBytes)
 	}
 }
+
+func TestSPADoesNotShadowAPI(t *testing.T) {
+	env := newRecoveryTestEnv(t, nil)
+
+	apiResp := env.get("/v1/pipelines")
+	if apiResp.Code != http.StatusOK {
+		t.Fatalf("GET /v1/pipelines status=%d body=%s", apiResp.Code, apiResp.Body.String())
+	}
+	var pipelines struct {
+		Pipelines []struct {
+			ID string `json:"id"`
+		} `json:"pipelines"`
+	}
+	if err := json.Unmarshal(apiResp.Body.Bytes(), &pipelines); err != nil {
+		t.Fatalf("GET /v1/pipelines not JSON: %v body=%s", err, apiResp.Body.String())
+	}
+	if len(pipelines.Pipelines) == 0 || pipelines.Pipelines[0].ID != "demo" {
+		t.Fatalf("GET /v1/pipelines unexpected payload: %+v", pipelines)
+	}
+
+	spaResp := env.get("/runs/fake")
+	if spaResp.Code != http.StatusOK {
+		t.Fatalf("GET /runs/fake status=%d body=%s", spaResp.Code, spaResp.Body.String())
+	}
+	body := spaResp.Body.String()
+	if !strings.Contains(body, `<div id="root"></div>`) && !strings.Contains(body, "Shuttle") {
+		t.Fatalf("GET /runs/fake body missing SPA shell markers: %q", body)
+	}
+}
