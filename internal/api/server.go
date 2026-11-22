@@ -82,19 +82,22 @@ type decisionRequest struct {
 }
 
 type runResponse struct {
-	ID          string          `json:"id"`
-	TemplateID  string          `json:"template_id"`
-	Status      string          `json:"status"`
-	CWD         string          `json:"cwd"`
-	RunDir      string          `json:"run_dir"`
-	Agent       string          `json:"agent,omitempty"`
-	Model       string          `json:"model,omitempty"`
-	IssueRef    string          `json:"issue_ref,omitempty"`
-	ParentRunID string          `json:"parent_run_id,omitempty"`
-	Remote      bool            `json:"remote,omitempty"`
-	OutputsMode string          `json:"outputs_mode,omitempty"`
-	Warnings    []string        `json:"warnings,omitempty"`
-	Stages      []stageResponse `json:"stages"`
+	ID           string          `json:"id"`
+	TemplateID   string          `json:"template_id"`
+	Status       string          `json:"status"`
+	CWD          string          `json:"cwd"`
+	RunDir       string          `json:"run_dir"`
+	Agent        string          `json:"agent,omitempty"`
+	Model        string          `json:"model,omitempty"`
+	IssueRef     string          `json:"issue_ref,omitempty"`
+	ParentRunID  string          `json:"parent_run_id,omitempty"`
+	Remote       bool            `json:"remote,omitempty"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+	CurrentStage string          `json:"current_stage"`
+	OutputsMode  string          `json:"outputs_mode,omitempty"`
+	Warnings     []string        `json:"warnings,omitempty"`
+	Stages       []stageResponse `json:"stages"`
 }
 
 type stageResponse struct {
@@ -548,27 +551,32 @@ func (s *Server) writeRun(w http.ResponseWriter, status int, runID string) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	var pl *pipeline.Pipeline
 	outputsMode := ""
 	if s.engine.TemplateLoader != nil {
-		if pl, err := s.engine.TemplateLoader(run.TemplateID); err == nil {
+		if loaded, err := s.engine.TemplateLoader(run.TemplateID); err == nil {
+			pl = loaded
 			outputsMode = pipeline.OutputsMode(run.TemplateID, pl)
 		}
 	}
 
 	resp := runResponse{
-		ID:          run.ID,
-		TemplateID:  run.TemplateID,
-		Status:      string(run.Status),
-		CWD:         run.CWD,
-		RunDir:      run.RunDir,
-		Agent:       run.Agent,
-		Model:       run.Model,
-		IssueRef:    run.IssueRef,
-		ParentRunID: run.ParentRunID,
-		Remote:      run.Remote,
-		OutputsMode: outputsMode,
-		Warnings:    s.engine.StartWarnings(runID),
-		Stages:      make([]stageResponse, 0, len(stages)),
+		ID:           run.ID,
+		TemplateID:   run.TemplateID,
+		Status:       string(run.Status),
+		CWD:          run.CWD,
+		RunDir:       run.RunDir,
+		Agent:        run.Agent,
+		Model:        run.Model,
+		IssueRef:     run.IssueRef,
+		ParentRunID:  run.ParentRunID,
+		Remote:       run.Remote,
+		CreatedAt:    run.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:    run.UpdatedAt.UTC().Format(time.RFC3339),
+		CurrentStage: pipeline.CurrentStage(pl, stages),
+		OutputsMode:  outputsMode,
+		Warnings:     s.engine.StartWarnings(runID),
+		Stages:       make([]stageResponse, 0, len(stages)),
 	}
 	for _, stage := range stages {
 		resp.Stages = append(resp.Stages, stageResponse{

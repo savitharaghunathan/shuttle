@@ -86,6 +86,15 @@ func (e *recoveryTestEnv) post(path, body string) *httptest.ResponseRecorder {
 	return resp
 }
 
+func (e *recoveryTestEnv) get(path string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req = req.WithContext(context.Background())
+	resp := httptest.NewRecorder()
+	e.handler.ServeHTTP(resp, req)
+	return resp
+}
+
 func (e *recoveryTestEnv) createRun(body string) (id, status string) {
 	e.t.Helper()
 	resp := e.post("/v1/runs", body)
@@ -186,6 +195,31 @@ func TestCreateRunAndGetStatus(t *testing.T) {
 	}
 	if len(got.Stages) != 1 || got.Stages[0].ID != "build" || got.Stages[0].Status != string(store.StageStatusSucceeded) {
 		t.Fatalf("stages=%+v want succeeded build stage", got.Stages)
+	}
+}
+
+func TestGetRunIncludesTimestampsAndCurrentStage(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "built"},
+	})
+	id, _ := env.createRun(`{"template_id":"demo"}`)
+
+	resp := env.get("/v1/runs/" + id)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"created_at", "updated_at", "current_stage"} {
+		if _, ok := body[key]; !ok {
+			t.Fatalf("missing %s in %v", key, body)
+		}
+	}
+	if body["current_stage"] != "build" {
+		t.Fatalf("current_stage=%v want build", body["current_stage"])
 	}
 }
 
