@@ -52,4 +52,3 @@ func TestBackoffWaitRespectsCancel(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
-

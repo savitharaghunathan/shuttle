@@ -62,4 +62,3 @@ func (b Backoff) Wait(ctx context.Context, attempt int) error {
 		return nil
 	}
 }
-
