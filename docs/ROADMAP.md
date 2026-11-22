@@ -35,16 +35,14 @@ CLI `run` and `POST /v1/runs` share one create-run policy: headless template swa
 ### Remote workers (Agent Substrate)
 Opt-in `--remote` runs agent stages on sticky Claude actors via ate gRPC Control API + HTTP task API. Local `test` / `open_pr` / gates stay local; no local CLI fallback. Requires a pre-provisioned ate cluster (`ate:` in config); kind+podman helpers under `deploy/ate/kind/` for local verify. See `docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md`.
 
+### Local web dashboard
+Embedded Vite/React UI on `shuttle serve` at `http://127.0.0.1:8080/`: list/detail/logs, create (issue-URL primary; absolute `spec_path` is server-local), resume/retry/approve. Localhost-only and unauthenticated; Node 22+ required to build. Create/resume/approve POSTs can take minutes.
+
 ---
 
 ## Next
 
 Items are in priority order. Do not start a later item until the one above it has moved to Shipped (or been explicitly re-ranked).
-
-### Local web dashboard
-**Goal:** Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
-
-Explicitly re-ranked ahead of Full SDLC dogfood (2026-11-22). API / CLI run parity is the prerequisite; this is the surface that makes runs visible.
 
 ### Full SDLC pipeline
 **Goal:** Ship the embedded `sdlc` template as a first-class product path: plan → design → implement → test → review → approve → ship.

@@ -21,7 +21,7 @@ Imported repos live under `~/.shuttle/repos/<owner>/<name>` by default, or at an
 
 ## Install
 
-Build the CLI from the repository:
+Build the CLI from the repository (Node 22+ required for the embedded dashboard assets):
 
 ```bash
 go build -o bin/shuttle ./cmd/shuttle
@@ -306,7 +306,9 @@ shuttle cancel <run-id>
 
 `status` reports `outputs: strict` for the embedded `sdlc` templates and `outputs: bridge` for overlays that declare stage outputs without strict enforcement, so a local `pipelines/sdlc-*.yaml` run is distinguishable from a real one.
 
-`shuttle serve` starts an unauthenticated local HTTP API on `127.0.0.1:8080`. Treat it as local-only.
+`shuttle serve` binds an unauthenticated HTTP API to `127.0.0.1` only (localhost). Open `http://127.0.0.1:8080/` for the embedded dashboard. Building the binary embeds the UI and requires **Node 22+** (`make build` / `make ui-build`).
+
+Dashboard create-run prefers an issue URL; an absolute `spec_path` is resolved on the server (not in the browser). Create, resume, and approve POSTs can take minutes — they block while the run progresses.
 
 `POST /v1/runs` follows the same rules as `shuttle run`:
 
