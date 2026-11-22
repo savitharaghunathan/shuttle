@@ -94,7 +94,7 @@ func (c *TaskClient) RunTask(ctx context.Context, actor string, req TaskRequest,
 		break
 	}
 	// Write body to log only when it's not a retryable "still resuming" 503 response.
-	if log != nil && len(data) > 0 && !(statusCode == http.StatusServiceUnavailable && IsResumeParkingHTTP(statusCode, data)) {
+	if log != nil && len(data) > 0 && !IsResumeParkingHTTP(statusCode, data) {
 		_, _ = log.Write(data)
 		if data[len(data)-1] != '\n' {
 			_, _ = io.WriteString(log, "\n")
