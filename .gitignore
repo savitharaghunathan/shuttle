@@ -3,6 +3,8 @@
 .shuttle/
 bin/
 /shuttle
+web/node_modules/
+web/dist/
 *.db
 deploy/ate/kind/smoke.env
 deploy/ate/kind/.generated-*.yaml

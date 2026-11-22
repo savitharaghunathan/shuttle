@@ -2,6 +2,7 @@
 #
 #   make help              show targets
 #   make build             compile bin/shuttle
+#   make ui-build          build web UI assets
 #   make test-unit         fast unit tests (no integration tag)
 #   make test-integration  CLI pipeline integration tests
 #   make test              unit + integration
@@ -19,6 +20,8 @@ CMD      := ./cmd/shuttle
 BIN      := bin/shuttle
 GO       ?= go
 GOFLAGS  ?=
+NODE     ?= node
+NPM      ?= npm
 GOPATH_BIN := $(shell $(GO) env GOPATH)/bin
 GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || echo $(GOPATH_BIN)/golangci-lint)
 TEST_PKGS := ./...
@@ -26,6 +29,7 @@ SHUTTLE_TEST_APP ?= $(HOME)/local_dev/test
 TEST_APP_SCRIPTS := examples/scripts
 
 .PHONY: help build install run clean \
+        ui-build check-node \
         lint test test-unit test-integration test-race verify \
         serve-test-app smoke-test-app \
         ate-kind-up ate-kind-down ate-kind-clean ate-kind-smoke ate-kind-port-forward ate-kind-build-images
@@ -40,6 +44,17 @@ build: ## build bin/shuttle
 	@mkdir -p bin
 	$(GO) build $(GOFLAGS) -o $(BIN) $(CMD)
 	@echo "built $(BIN)"
+
+check-node: ## require Node/npm for UI
+	@command -v $(NODE) >/dev/null || { echo "node required for UI build; install Node 22+"; exit 1; }
+	@command -v $(NPM) >/dev/null || { echo "npm required for UI build"; exit 1; }
+
+ui-build: check-node ## build web/ into internal/ui/dist
+	@if [ ! -f web/package.json ]; then echo "web/package.json missing - complete Task 4 before running ui-build"; exit 1; fi
+	cd web && $(NPM) ci && $(NPM) run build
+	rm -rf internal/ui/dist
+	mkdir -p internal/ui/dist
+	cp -R web/dist/. internal/ui/dist/
 
 install: build ## install shuttle to $$GOBIN or $$GOPATH/bin
 	$(GO) install $(GOFLAGS) $(CMD)
