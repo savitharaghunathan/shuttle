@@ -7,7 +7,8 @@
 #   make test-integration  CLI pipeline integration tests
 #   make test              unit + integration
 #   make lint              go vet, gofmt, golangci-lint
-#   make verify            build + lint + test
+#   make ui-test           Vitest for web/
+#   make verify            build + lint + test + ui-test
 #   make serve-test-app    serve API from SHUTTLE_TEST_APP (~/local_dev/test)
 #   make smoke-test-app    API recovery smoke (server must be running)
 #   make ate-kind-clean    tear down kind+podman ate test cluster/state
@@ -29,7 +30,7 @@ SHUTTLE_TEST_APP ?= $(HOME)/local_dev/test
 TEST_APP_SCRIPTS := examples/scripts
 
 .PHONY: help build install run clean \
-        ui-build check-node \
+        ui-build ui-test check-node \
         lint test test-unit test-integration test-race verify \
         serve-test-app smoke-test-app \
         ate-kind-up ate-kind-down ate-kind-clean ate-kind-smoke ate-kind-port-forward ate-kind-build-images
@@ -55,6 +56,10 @@ ui-build: check-node ## build web/ into internal/ui/dist
 	rm -rf internal/ui/dist
 	mkdir -p internal/ui/dist
 	cp -R web/dist/. internal/ui/dist/
+
+ui-test: check-node ## run Vitest for web/
+	@if [ ! -f web/package.json ]; then echo "web/package.json missing"; exit 1; fi
+	cd web && $(NPM) ci && $(NPM) test
 
 install: build ## install shuttle to $$GOBIN or $$GOPATH/bin
 	$(GO) install $(GOFLAGS) $(CMD)
@@ -86,7 +91,7 @@ lint: ## go vet, gofmt, and golangci-lint
 	}
 	"$(GOLANGCI_LINT)" run ./...
 
-verify: build lint test ## build, lint, and run all tests
+verify: build lint test ui-test ## build, lint, go tests, UI tests
 
 serve-test-app: build ## serve API from SHUTTLE_TEST_APP checkout (port 8080)
 	SHUTTLE_TEST_APP="$(SHUTTLE_TEST_APP)" SHUTTLE_BIN="$(CURDIR)/$(BIN)" \
