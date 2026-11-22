@@ -32,6 +32,9 @@ Deterministic feature branches per run (`shuttle/issue-N` for issues, `shuttle/r
 ### API / CLI run parity
 CLI `run` and `POST /v1/runs` share one create-run policy: headless template swap, spec-or-issue, issue body fetch into the run spec, served-repo check, and `outputs_mode` on run JSON. A dashboard can sit on the API without a second set of rules.
 
+### Remote workers (Agent Substrate)
+Opt-in `--remote` runs agent stages on sticky Claude actors via ate gRPC Control API + HTTP task API. Local `test` / `open_pr` / gates stay local; no local CLI fallback. Requires a pre-provisioned ate cluster (`ate:` in config); kind+podman helpers under `deploy/ate/kind/` for local verify. See `docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md`.
+
 ---
 
 ## Next
@@ -68,11 +71,6 @@ Explicit import stays the default; auto-import is opt-in behavior for faster ite
 
 ## Future
 
-### Remote workers
-Run agent stages on another machine or pool while keeping the control plane local.
-
-**In progress (`feat/ate-remote-workers`):** Agent Substrate ([ate.dev](https://ate.dev)) integration — `--remote` runs agent stages on sticky Claude actors via gRPC Control API + HTTP task API; local `test`/`open_pr`/gates stay local; no local CLI fallback. See `docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md`.
-
 ### Team / shared factory
 Multi-user registry, auth, and shared run history — beyond single-user local trust boundary.
 
@@ -84,7 +82,7 @@ Share and overlay pipeline templates across repos (`pipelines/` today is local-o
 ## Out of scope (for now)
 
 - Multi-tenant auth / SSO
-- Vendor SDKs in core (agents stay CLI-invoked locally; remote mode uses ate gRPC + OCI actors)
+- Vendor SDKs in core (local agents stay CLI-invoked; remote mode uses ate gRPC + OCI actors)
 - Concurrent writers to the same `.shuttle/shuttle.db`
 
 ---

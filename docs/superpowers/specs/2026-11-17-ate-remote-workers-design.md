@@ -1,6 +1,6 @@
 # Ate Remote Workers — Design
 
-**Status:** Implemented on `feat/ate-remote-workers` (2026-11-17). User docs: root `README.md` (Remote workers), `deploy/ate/README.md`, `deploy/ate/kind/README.md`.
+**Status:** Shipped on `main` (merged PR #10, 2026-11-17). User docs: root `README.md` (Remote workers), `deploy/ate/README.md`, `deploy/ate/kind/README.md`.
 
 ## Problem
 
