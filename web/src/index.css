@@ -234,3 +234,70 @@ button:disabled {
   max-height: 28rem;
   overflow: auto;
 }
+
+.run-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  max-width: 28rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.field-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.field input[type="text"],
+.field input[type="url"],
+.field select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.field-help {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.advanced {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fff;
+  padding: 0.5rem 0.65rem;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.advanced .field {
+  margin-top: 0.65rem;
+}
+
+.form-actions {
+  margin-top: 0.25rem;
+}
+
+.form-actions button[type="submit"] {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border-color: var(--btn-bg);
+}
