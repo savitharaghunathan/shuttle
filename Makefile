@@ -40,7 +40,7 @@ help: ## show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make [target]\n\nTargets:\n"} \
 		/^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## build bin/shuttle
+build: ui-build ## build UI assets then bin/shuttle (requires Node)
 	@mkdir -p bin
 	$(GO) build $(GOFLAGS) -o $(BIN) $(CMD)
 	@echo "built $(BIN)"
@@ -50,7 +50,7 @@ check-node: ## require Node/npm for UI
 	@command -v $(NPM) >/dev/null || { echo "npm required for UI build"; exit 1; }
 
 ui-build: check-node ## build web/ into internal/ui/dist
-	@if [ ! -f web/package.json ]; then echo "web/package.json missing - complete Task 4 before running ui-build"; exit 1; fi
+	@if [ ! -f web/package.json ]; then echo "web/package.json missing"; exit 1; fi
 	cd web && $(NPM) ci && $(NPM) run build
 	rm -rf internal/ui/dist
 	mkdir -p internal/ui/dist
