@@ -885,3 +885,66 @@ func TestRunJSONIncludesOutputsMode(t *testing.T) {
 		}
 	}
 }
+
+func TestGetStageLogMissingLogPath(t *testing.T) {
+	env := newRecoveryTestEnv(t, nil)
+	runID := "11111111-1111-4111-8111-111111111111"
+	runDir := filepath.Join(env.dir, "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.CreateRun(store.Run{
+		ID:         runID,
+		TemplateID: "demo",
+		Status:     store.RunStatusSucceeded,
+		CWD:        env.dir,
+		RunDir:     runDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.CreateStageRuns([]store.StageRun{{
+		ID:      runID + ":build",
+		RunID:   runID,
+		StageID: "build",
+		Worker:  "fake",
+		Status:  store.StageStatusSucceeded,
+		Attempt: 1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := env.get("/v1/runs/" + runID + "/stages/build/log")
+	assertStatus(t, resp, http.StatusNotFound, "log not found")
+}
+
+func TestGetStageLogReturnsTextWithTruncatedHeader(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "built"},
+	})
+	id, _ := env.createRun(`{"template_id":"demo"}`)
+	run, err := env.store.GetRun(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(run.RunDir, "logs", "build.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Repeat("x", api.MaxLogBytes+10)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := env.get("/v1/runs/" + id + "/stages/build/log")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Fatalf("Content-Type=%q want text/plain", got)
+	}
+	if got := resp.Header().Get("X-Shuttle-Log-Truncated"); got != "true" {
+		t.Fatalf("X-Shuttle-Log-Truncated=%q want true", got)
+	}
+	if resp.Body.Len() != api.MaxLogBytes {
+		t.Fatalf("body len=%d want %d", resp.Body.Len(), api.MaxLogBytes)
+	}
+}

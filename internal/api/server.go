@@ -61,6 +61,7 @@ func NewHandler(engine *pipeline.Engine, opts Options) http.Handler {
 	r.Post("/v1/runs/{id}/cancel", s.cancelRun)
 	r.Post("/v1/runs/{id}/approve", s.approveRun)
 	r.Post("/v1/runs/{id}/reject", s.rejectRun)
+	r.Get("/v1/runs/{id}/stages/{stage_id}/log", s.getStageLog)
 	r.Get("/v1/pipelines", s.listPipelines)
 	return r
 }
