@@ -41,10 +41,15 @@ Opt-in `--remote` runs agent stages on sticky Claude actors via ate gRPC Control
 
 Items are in priority order. Do not start a later item until the one above it has moved to Shipped (or been explicitly re-ranked).
 
+### Local web dashboard
+**Goal:** Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
+
+Explicitly re-ranked ahead of Full SDLC dogfood (2026-11-22). API / CLI run parity is the prerequisite; this is the surface that makes runs visible.
+
 ### Full SDLC pipeline
 **Goal:** Ship the embedded `sdlc` template as a first-class product path: plan → design → implement → test → review → approve → ship.
 
-Implementation is on `main`. Mark Shipped after the dogfood checklist.
+Implementation is on `main`. Mark Shipped after the dogfood checklist (deferred; not blocking dashboard).
 
 Capabilities ready:
 
@@ -56,11 +61,6 @@ Capabilities ready:
 - SDLC retry rebuilds from `plan` using the frozen spec and warns that prior artifacts are discarded.
 
 Dogfood checklist before moving to Shipped: run gated SDLC in a real repo with scaffolded `ship.command`, inspect plan/design/implement artifacts, approve `approve_ship`, confirm PR open is idempotent, and optionally run `sdlc-headless` on a throwaway spec.
-
-### Local web dashboard
-**Goal:** Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
-
-First build after SDLC dogfood. API / CLI run parity is the prerequisite; this is the surface that makes runs visible.
 
 ### Zero-touch repo discovery
 **Goal:** `run --issue` can resolve and register a repo the first time, without a separate import step.

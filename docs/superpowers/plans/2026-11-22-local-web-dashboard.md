@@ -8,9 +8,9 @@
 
 **Tech Stack:** Go 1.26, chi, `embed`, Vite 6, React 19, TypeScript, React Router, Vitest. MIT/Apache-2.0 deps only. Node 22.
 
-**Spec:** [`docs/superpowers/specs/2026-11-22-local-web-dashboard-design.md`](../specs/2026-11-22-local-web-dashboard-design.md) (rev 3)
+**Spec:** [`docs/superpowers/specs/2026-11-22-local-web-dashboard-design.md`](../specs/2026-11-22-local-web-dashboard-design.md) (rev 4)
 
-**Prerequisite:** SDLC dogfood plan complete; Full SDLC marked Shipped on this branch.
+**Prerequisite:** None beyond shipped API/CLI run parity on `main`. SDLC dogfood is deferred and does not block this plan.
 
 ## Global Constraints
 

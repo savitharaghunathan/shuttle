@@ -1,6 +1,6 @@
 # Local Web Dashboard — Design
 
-**Status:** Approved for planning (2026-11-22, rev 3). Prerequisite: SDLC dogfood + ROADMAP Shipped (`docs/superpowers/specs/2026-11-22-sdlc-dogfood-design.md`). Builds on shipped API/CLI run parity and runs list/recovery APIs.
+**Status:** Approved for planning (2026-11-22, rev 4 — dogfood deferred; dashboard re-ranked first). Prerequisite: shipped API/CLI run parity and runs list/recovery APIs. SDLC dogfood is deferred and does not block this work.
 
 ## Problem
 
