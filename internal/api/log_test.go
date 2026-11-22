@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,21 @@ func TestReadStageLogRejectsEscape(t *testing.T) {
 	_, _, err := readStageLog(runDir, outside, 0)
 	if err == nil {
 		t.Fatal("expected escape error")
+	}
+}
+
+func TestReadStageLogRejectsMissingEscapeBeforeNotExist(t *testing.T) {
+	dir := t.TempDir()
+	runDir := filepath.Join(dir, "run")
+	_ = os.MkdirAll(runDir, 0o755)
+	outside := filepath.Join(dir, "missing.log")
+
+	_, _, err := readStageLog(runDir, outside, 0)
+	if err == nil {
+		t.Fatal("expected escape error")
+	}
+	if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
+		t.Fatalf("expected escape error, got not-exist error: %v", err)
 	}
 }
 

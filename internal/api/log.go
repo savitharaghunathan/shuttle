@@ -22,10 +22,7 @@ func readStageLog(runDir, logPath string, tailLines int) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	realRun, err := filepath.EvalSymlinks(absRun)
-	if err != nil {
-		return nil, false, err
-	}
+	absRun = filepath.Clean(absRun)
 	candidate := logPath
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(absRun, candidate)
@@ -34,11 +31,20 @@ func readStageLog(runDir, logPath string, tailLines int) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	absFile = filepath.Clean(absFile)
+	rel, err := filepath.Rel(absRun, absFile)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return nil, false, fmt.Errorf("log path escapes run dir")
+	}
+	realRun, err := filepath.EvalSymlinks(absRun)
+	if err != nil {
+		return nil, false, err
+	}
 	realFile, err := filepath.EvalSymlinks(absFile)
 	if err != nil {
 		return nil, false, err
 	}
-	rel, err := filepath.Rel(realRun, realFile)
+	rel, err = filepath.Rel(realRun, realFile)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return nil, false, fmt.Errorf("log path escapes run dir")
 	}
