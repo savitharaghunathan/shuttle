@@ -20,6 +20,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: UI build
+        run: make ui-build
+
       - name: go vet
         run: go vet ./...
 
@@ -42,6 +51,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: UI build
+        run: make ui-build
+
+      - name: UI test
+        run: make ui-test
+
       - name: unit tests
         run: make test-unit
 
@@ -55,6 +76,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: UI build
+        run: make ui-build
 
       - name: integration tests
         run: make test-integration

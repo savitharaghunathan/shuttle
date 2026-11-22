@@ -35,6 +35,9 @@ CLI `run` and `POST /v1/runs` share one create-run policy: headless template swa
 ### Remote workers (Agent Substrate)
 Opt-in `--remote` runs agent stages on sticky Claude actors via ate gRPC Control API + HTTP task API. Local `test` / `open_pr` / gates stay local; no local CLI fallback. Requires a pre-provisioned ate cluster (`ate:` in config); kind+podman helpers under `deploy/ate/kind/` for local verify. See `docs/superpowers/specs/2026-11-17-ate-remote-workers-design.md`.
 
+### Local web dashboard
+Embedded Vite/React UI on `shuttle serve` at `http://127.0.0.1:8080/`: list/detail/logs, create (issue-URL primary; absolute `spec_path` is server-local), resume/retry/approve. Localhost-only and unauthenticated; Node 22+ required to build. Create/resume/approve POSTs can take minutes.
+
 ---
 
 ## Next
@@ -44,7 +47,7 @@ Items are in priority order. Do not start a later item until the one above it ha
 ### Full SDLC pipeline
 **Goal:** Ship the embedded `sdlc` template as a first-class product path: plan → design → implement → test → review → approve → ship.
 
-Implementation is on `main`. Mark Shipped after the dogfood checklist.
+Implementation is on `main`. Mark Shipped after the dogfood checklist (deferred; not blocking dashboard).
 
 Capabilities ready:
 
@@ -56,11 +59,6 @@ Capabilities ready:
 - SDLC retry rebuilds from `plan` using the frozen spec and warns that prior artifacts are discarded.
 
 Dogfood checklist before moving to Shipped: run gated SDLC in a real repo with scaffolded `ship.command`, inspect plan/design/implement artifacts, approve `approve_ship`, confirm PR open is idempotent, and optionally run `sdlc-headless` on a throwaway spec.
-
-### Local web dashboard
-**Goal:** Browser UI on `shuttle serve`: list runs, drill into status/logs, resume/retry — built on the runs list API.
-
-First build after SDLC dogfood. API / CLI run parity is the prerequisite; this is the surface that makes runs visible.
 
 ### Zero-touch repo discovery
 **Goal:** `run --issue` can resolve and register a repo the first time, without a separate import step.

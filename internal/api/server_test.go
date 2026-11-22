@@ -86,6 +86,15 @@ func (e *recoveryTestEnv) post(path, body string) *httptest.ResponseRecorder {
 	return resp
 }
 
+func (e *recoveryTestEnv) get(path string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req = req.WithContext(context.Background())
+	resp := httptest.NewRecorder()
+	e.handler.ServeHTTP(resp, req)
+	return resp
+}
+
 func (e *recoveryTestEnv) createRun(body string) (id, status string) {
 	e.t.Helper()
 	resp := e.post("/v1/runs", body)
@@ -186,6 +195,31 @@ func TestCreateRunAndGetStatus(t *testing.T) {
 	}
 	if len(got.Stages) != 1 || got.Stages[0].ID != "build" || got.Stages[0].Status != string(store.StageStatusSucceeded) {
 		t.Fatalf("stages=%+v want succeeded build stage", got.Stages)
+	}
+}
+
+func TestGetRunIncludesTimestampsAndCurrentStage(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "built"},
+	})
+	id, _ := env.createRun(`{"template_id":"demo"}`)
+
+	resp := env.get("/v1/runs/" + id)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"created_at", "updated_at", "current_stage"} {
+		if _, ok := body[key]; !ok {
+			t.Fatalf("missing %s in %v", key, body)
+		}
+	}
+	if body["current_stage"] != "build" {
+		t.Fatalf("current_stage=%v want build", body["current_stage"])
 	}
 }
 
@@ -849,5 +883,97 @@ func TestRunJSONIncludesOutputsMode(t *testing.T) {
 		if !strings.Contains(listResp.Body.String(), want) {
 			t.Fatalf("list body %s missing %s", listResp.Body.String(), want)
 		}
+	}
+}
+
+func TestGetStageLogMissingLogPath(t *testing.T) {
+	env := newRecoveryTestEnv(t, nil)
+	runID := "11111111-1111-4111-8111-111111111111"
+	runDir := filepath.Join(env.dir, "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.CreateRun(store.Run{
+		ID:         runID,
+		TemplateID: "demo",
+		Status:     store.RunStatusSucceeded,
+		CWD:        env.dir,
+		RunDir:     runDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.CreateStageRuns([]store.StageRun{{
+		ID:      runID + ":build",
+		RunID:   runID,
+		StageID: "build",
+		Worker:  "fake",
+		Status:  store.StageStatusSucceeded,
+		Attempt: 1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := env.get("/v1/runs/" + runID + "/stages/build/log")
+	assertStatus(t, resp, http.StatusNotFound, "log not found")
+}
+
+func TestGetStageLogReturnsTextWithTruncatedHeader(t *testing.T) {
+	env := newRecoveryTestEnv(t, map[string]worker.Result{
+		"build": {Status: worker.StatusSucceeded, Summary: "built"},
+	})
+	id, _ := env.createRun(`{"template_id":"demo"}`)
+	run, err := env.store.GetRun(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(run.RunDir, "logs", "build.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Repeat("x", api.MaxLogBytes+10)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := env.get("/v1/runs/" + id + "/stages/build/log")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Fatalf("Content-Type=%q want text/plain", got)
+	}
+	if got := resp.Header().Get("X-Shuttle-Log-Truncated"); got != "true" {
+		t.Fatalf("X-Shuttle-Log-Truncated=%q want true", got)
+	}
+	if resp.Body.Len() != api.MaxLogBytes {
+		t.Fatalf("body len=%d want %d", resp.Body.Len(), api.MaxLogBytes)
+	}
+}
+
+func TestSPADoesNotShadowAPI(t *testing.T) {
+	env := newRecoveryTestEnv(t, nil)
+
+	apiResp := env.get("/v1/pipelines")
+	if apiResp.Code != http.StatusOK {
+		t.Fatalf("GET /v1/pipelines status=%d body=%s", apiResp.Code, apiResp.Body.String())
+	}
+	var pipelines struct {
+		Pipelines []struct {
+			ID string `json:"id"`
+		} `json:"pipelines"`
+	}
+	if err := json.Unmarshal(apiResp.Body.Bytes(), &pipelines); err != nil {
+		t.Fatalf("GET /v1/pipelines not JSON: %v body=%s", err, apiResp.Body.String())
+	}
+	if len(pipelines.Pipelines) == 0 || pipelines.Pipelines[0].ID != "demo" {
+		t.Fatalf("GET /v1/pipelines unexpected payload: %+v", pipelines)
+	}
+
+	spaResp := env.get("/runs/fake")
+	if spaResp.Code != http.StatusOK {
+		t.Fatalf("GET /runs/fake status=%d body=%s", spaResp.Code, spaResp.Body.String())
+	}
+	body := spaResp.Body.String()
+	if !strings.Contains(body, `<div id="root"></div>`) && !strings.Contains(body, "Shuttle") {
+		t.Fatalf("GET /runs/fake body missing SPA shell markers: %q", body)
 	}
 }

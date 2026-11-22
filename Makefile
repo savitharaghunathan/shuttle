@@ -2,11 +2,13 @@
 #
 #   make help              show targets
 #   make build             compile bin/shuttle
+#   make ui-build          build web UI assets
 #   make test-unit         fast unit tests (no integration tag)
 #   make test-integration  CLI pipeline integration tests
 #   make test              unit + integration
 #   make lint              go vet, gofmt, golangci-lint
-#   make verify            build + lint + test
+#   make ui-test           Vitest for web/
+#   make verify            build + lint + test + ui-test
 #   make serve-test-app    serve API from SHUTTLE_TEST_APP (~/local_dev/test)
 #   make smoke-test-app    API recovery smoke (server must be running)
 #   make ate-kind-clean    tear down kind+podman ate test cluster/state
@@ -19,6 +21,8 @@ CMD      := ./cmd/shuttle
 BIN      := bin/shuttle
 GO       ?= go
 GOFLAGS  ?=
+NODE     ?= node
+NPM      ?= npm
 GOPATH_BIN := $(shell $(GO) env GOPATH)/bin
 GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || echo $(GOPATH_BIN)/golangci-lint)
 TEST_PKGS := ./...
@@ -26,6 +30,7 @@ SHUTTLE_TEST_APP ?= $(HOME)/local_dev/test
 TEST_APP_SCRIPTS := examples/scripts
 
 .PHONY: help build install run clean \
+        ui-build ui-test check-node \
         lint test test-unit test-integration test-race verify \
         serve-test-app smoke-test-app \
         ate-kind-up ate-kind-down ate-kind-clean ate-kind-smoke ate-kind-port-forward ate-kind-build-images
@@ -36,10 +41,25 @@ help: ## show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make [target]\n\nTargets:\n"} \
 		/^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## build bin/shuttle
+build: ui-build ## build UI assets then bin/shuttle (requires Node)
 	@mkdir -p bin
 	$(GO) build $(GOFLAGS) -o $(BIN) $(CMD)
 	@echo "built $(BIN)"
+
+check-node: ## require Node/npm for UI
+	@command -v $(NODE) >/dev/null || { echo "node required for UI build; install Node 22+"; exit 1; }
+	@command -v $(NPM) >/dev/null || { echo "npm required for UI build"; exit 1; }
+
+ui-build: check-node ## build web/ into internal/ui/dist
+	@if [ ! -f web/package.json ]; then echo "web/package.json missing"; exit 1; fi
+	cd web && $(NPM) ci && $(NPM) run build
+	rm -rf internal/ui/dist
+	mkdir -p internal/ui/dist
+	cp -R web/dist/. internal/ui/dist/
+
+ui-test: check-node ## run Vitest for web/
+	@if [ ! -f web/package.json ]; then echo "web/package.json missing"; exit 1; fi
+	cd web && $(NPM) ci && $(NPM) test
 
 install: build ## install shuttle to $$GOBIN or $$GOPATH/bin
 	$(GO) install $(GOFLAGS) $(CMD)
@@ -71,7 +91,7 @@ lint: ## go vet, gofmt, and golangci-lint
 	}
 	"$(GOLANGCI_LINT)" run ./...
 
-verify: build lint test ## build, lint, and run all tests
+verify: build lint test ui-test ## build, lint, go tests, UI tests
 
 serve-test-app: build ## serve API from SHUTTLE_TEST_APP checkout (port 8080)
 	SHUTTLE_TEST_APP="$(SHUTTLE_TEST_APP)" SHUTTLE_BIN="$(CURDIR)/$(BIN)" \
